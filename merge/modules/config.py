@@ -15,7 +15,8 @@ class TransformerConfig:
     dropout: Float
     bias: bool
     rope_theta: Float
-    activation_fn: str
-    mlp: str
-    normalization: str
-    attention: str
+    pos_encoding_type: str  # rope, absolute
+    activation_fn: str  # relu, gelu, silu, tanh
+    mlp: str  # mlp, mlp_swiglu
+    normalization: str  # rmsnorm, layernorm, none
+    attention: str  # mha

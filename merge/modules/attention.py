@@ -1,51 +1,57 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Bool
+from jaxtyping import Complex
 from jaxtyping import Float
 from jaxtyping import Int
-from jaxtyping import Complex
 from torch import Tensor
 
+from merge.modules.config import TransformerConfig
 from merge.modules.pos_embeddings import apply_rope
 
 
-def causal_attention_mask(sequence_length):
+def causal_attention_mask(sequence_length: Int) -> Float[Tensor, "1 1 seq seq"]:
     mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length)))
     return torch.where(mask == 1.0, 1.0, -10000.0)
 
 
 class MHA(nn.Module):
+    def __init__(self, config: TransformerConfig):
+        """
+        Multi-Head Attention implementing scaled dot-product attention.
 
-    def __init__(
-        self,
-        d_model: Int,
-        n_heads: Int,
-        attn_droput: Float = 0.0,
-        res_dropout: Float = 0.0,
-        bias: Bool = True,
-    ):
+        Args:
+        config (TransformerConfig): Configuration dataclass containing:
+            - num_heads: Number of attention heads
+            - d_model: Model dimension
+            - bias: Whether to use bias in linear layers
+            - dropout: Dropout probability for attention and residual connections
+
+        """
         super().__init__()
-
-        self.n_heads = n_heads
-        self.head_dim = d_model // n_heads
+        self.n_heads = config.num_heads
+        self.head_dim = config.d_model // config.num_heads
         self.scale = self.head_dim**-0.5
 
-        self.W_QKV = nn.Linear(d_model, d_model * 3, bias=bias)
-        self.W_O = nn.Linear(d_model, d_model, bias=bias)
+        self.W_QKV = nn.Linear(config.d_model, config.d_model * 3, bias=config.bias)
+        self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.bias)
 
-        self.attn_dropout = nn.Dropout(attn_droput)
-        self.res_dropout = nn.Dropout(res_dropout)
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.res_dropout = nn.Dropout(config.dropout)
 
         self.flash_attn: bool = hasattr(
             torch.nn.functional, "scaled_dot_product_attention"
         )
 
+        self.pos_encoding_type = config.pos_encoding_type
+
     def forward(
         self,
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
-        freqs_cis: Complex[Tensor, "seq half_head_dim"],
+        pos_info: Optional[Tensor],
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -61,7 +67,9 @@ class MHA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        q, k = apply_rope(q, k, freqs_cis)
+        if self.pos_encoding_type == "rope":
+            freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
+            q, k = apply_rope(q, k, freq_cis)
 
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(

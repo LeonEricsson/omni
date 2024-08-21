@@ -1,3 +1,5 @@
+from typing import Literal
+from typing import Optional
 from typing import Tuple
 from typing import TypeAlias
 
@@ -9,7 +11,28 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
+from merge.modules.config import TransformerConfig
+
 MHATensor: TypeAlias = Float[Tensor, "batch heads seq head_dim"]
+PositionEncodingType = Literal["rope", "absolute"]
+
+
+def _create_absolute_positions(d_model: int, seq_len: int) -> torch.Tensor:
+    """
+    Create sinusoidal position embeddings.
+    Returns: shape [1, seq_len, d_model]
+    """
+    pe = torch.zeros(seq_len, d_model)
+    position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, d_model, 2).float()
+        * (-torch.log(torch.tensor(10000.0)) / d_model)
+    )
+
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+
+    return pe.unsqueeze(0)
 
 
 def precompute_freqs_cis(
@@ -67,3 +90,41 @@ def apply_rope(
     )
 
     return real_q.type_as(q), real_k.type_as(k)
+
+
+class PositionEncoding(nn.Module):
+    VALID_TYPES: set[str] = {"rope", "absolute"}
+
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        if config.pos_encoding_type not in self.VALID_TYPES:
+            raise ValueError(
+                f"Invalid position encoding type: {config.pos_encoding_type}. Must be one of {self.VALID_TYPES}"
+            )
+
+        self.type = config.pos_encoding_type
+
+        if self.type == "absolute":
+            self.register_buffer(
+                "pos_embedding",
+                _create_absolute_positions(config.d_model, config.seq_len),
+            )
+        elif self.type == "rope":
+            self.register_buffer(
+                "freq_cis",
+                precompute_freqs_cis(
+                    config.d_model // config.num_heads,
+                    config.seq_len,
+                    config.rope_theta,
+                ),
+            )
+
+    def forward(self, x: Float[Tensor, "batch seq d_model"]):
+        pos_info = None
+
+        if self.type == "absolute":
+            x = x + self.pos_embedding
+        if self.type == "rope":
+            pos_info = self.freq_cis
+
+        return x, pos_info
