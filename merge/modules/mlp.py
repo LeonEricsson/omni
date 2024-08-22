@@ -61,10 +61,12 @@ class MLPSwiGLU(nn.Module):
                 (hidden_dim + 4 - 1) // 4
             )  # ensure hidden_dim is divisible by 4
 
-        self.up = nn.Linear(config.d_model, hidden_dim, bias=config.bias)
-        self.gate = nn.Linear(config.d_model, hidden_dim, bias=config.bias)
-        self.down = nn.Linear(hidden_dim, config.d_model, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout) if config.dropout else lambda x: x
+        self.up = nn.Linear(config.d_model, hidden_dim, bias=config.mlp_bias)
+        self.gate = nn.Linear(config.d_model, hidden_dim, bias=config.mlp_bias)
+        self.down = nn.Linear(hidden_dim, config.d_model, bias=config.mlp_bias)
+        self.dropout = (
+            nn.Dropout(config.mlp_dropout) if config.mlp_dropout else lambda x: x
+        )
 
     def forward(self, x):
         x = self.up(x) * F.silu(self.gate(x))  # SwiGLU
