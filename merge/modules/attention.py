@@ -207,4 +207,5 @@ class MHA(nn.Module):
 
 ATTN_MAP = {
     "mha": MHA,
+    "gqa": GQA,
 }

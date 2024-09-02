@@ -26,7 +26,7 @@ class LlamaConfig:
     mlp_bias: Bool = False
     mlp_dropout: Float = False
     attention_bias: Bool = False
-    attention_drouput: Float = 0.0
+    attention_dropout: Float = 0.0
     pos_encoding_type: str = "rope"
     mlp: str = "mlp_swiglu"
     normalization: str = "rmsnorm"
@@ -40,6 +40,6 @@ class Llama(Transformer):
         super().__init__(config)
 
     def forward(
-        self, x: Int[Tensor, "batch seq"]
+        self, x: Int[Tensor, "batch seq"], pad_mask: Int[Tensor, "batch seq"],
     ) -> Float[Tensor, "batch seq vocab_size"]:
-        return super().forward(x)
+        return super().forward(x, pad_mask)

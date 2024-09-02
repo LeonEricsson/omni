@@ -24,13 +24,14 @@ class Transformer(nn.Module):
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        self.causal_mask = self.register_buffer(
+        self.register_buffer(
             "causal_mask", causal_attention_mask(config.seq_len)
         )
 
     def forward(
         self, x: Int[Tensor, "batch seq"], pad_mask: Int[Tensor, "batch seq"],
     ) -> Float[Tensor, "batch seq vocab_size"]:
+        print(self.causal_mask, pad_mask)
         mask = self.causal_mask & pad_mask[:, None, None, :]
 
         x = self.token_emb(x)

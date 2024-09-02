@@ -54,7 +54,6 @@ def precompute_freqs_cis(
     freqs = 1.0 / torch.pow(
         theta, torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim
     )
-    print(freqs)
     positions = torch.arange(0, max_seq_length)
     rotations = torch.outer(positions, freqs)
     freqs_cis = torch.polar(torch.ones_like(rotations), rotations)

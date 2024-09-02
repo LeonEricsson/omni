@@ -84,7 +84,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
 def validate(
     test_dataloader: DataLoader,
     model: nn.Module,
-    epoch: int,
+    total_tokens: int,
     device: torch.device,
     ignore_index: int = -1,
 ) -> None:
@@ -136,9 +136,9 @@ def validate(
         **get_system_stats(),
     }
 
-    wandb.log(metrics, step=epoch)
-
-    table = Table(title=f"Validation Metrics - Epoch {epoch}")
+    wandb.log(metrics, step=total_tokens)
+    
+    table = Table(title=f"Validation Metrics (at {total_tokens:,} tokens)")
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="magenta")
 
@@ -175,11 +175,16 @@ def train(
         TimeElapsedColumn(),
     ) as progress:
         for epoch in range(num_epochs):
+
+            console.rule(f"[bold cyan]Epoch {epoch + 1}/{num_epochs}")
+            wandb.log({"epoch": epoch + 1}, step=total_tokens)
+
             epoch_task = progress.add_task(
-                f"[green]Epoch {epoch + 1}/{num_epochs}", total=len(train_dataloader)
+                f"[green]Epoch {epoch + 1}/{num_epochs}",
+                total=len(train_dataloader)
             )
 
-            for batch_idx, batch in enumerate(train_dataloader):
+            for batch in train_dataloader:
                 optimizer.zero_grad()
                 input_ids: Int[Tensor, "batch seq"] = batch["input_ids"][:, :-1].to(
                     device
@@ -215,7 +220,7 @@ def train(
                     metrics = {
                         "train/loss": loss.item(),
                         "train/learning_rate": current_lr,
-                        "train/epoch": epoch,
+                        "train/epoch": epoch + 1,
                         "train/step": total_steps,
                         "train/total_tokens": total_tokens,
                         **get_gpu_memory(),
@@ -224,7 +229,8 @@ def train(
                     wandb.log(metrics, step=total_tokens)  # Use tokens as step
 
                     # Log to console
-                    console.print(f"\nTokens processed: {total_tokens:,}")
+                    console.print(f"\nEpoch {epoch + 1}/{num_epochs}")
+                    console.print(f"Tokens processed: {total_tokens:,}")
                     console.print(f"Loss: {loss.item():.4f}")
                     console.print(f"Learning rate: {current_lr:.2e}")
 
@@ -235,7 +241,9 @@ def train(
 
                 progress.advance(epoch_task)
 
-            validate()
+            console.rule(f"[bold green]Epoch {epoch + 1} Complete")
+            console.print(f"Total tokens processed: {total_tokens:,}")
+           
 
 
 def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
@@ -308,5 +316,5 @@ if __name__ == "__main__":
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
     )
-
+    console.print("[green]Finished training!")
     wandb.finish()
