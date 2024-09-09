@@ -11,10 +11,9 @@ from torch import Tensor
 from merge.modules.config import TransformerConfig
 from merge.modules.pos_embeddings import apply_rope
 
-
-def causal_attention_mask(sequence_length: Int) -> Float[Tensor, "1 1 seq seq"]:
-    mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length)))
-    return torch.where(mask == 1.0, 1.0, -10000.0)
+def causal_attention_mask(sequence_length: Int) -> Float[Int, "1 1 seq seq"]:
+    mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length), dtype=torch.int32))
+    return mask * 1 + (1 - mask) * -10000
 
 
 class GQA(nn.Module):
