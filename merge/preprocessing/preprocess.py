@@ -70,16 +70,18 @@ def prepare_dataset(
         num_proc=num_proc,
     )
 
+    # max seq length + 1 to account for bos token. input and target both trim 
+    # 1 token off the sequence from left and right respectively.
     if split_long_sequences:
         dataset = _process_sequences(
             _tokenize(dataset, tokenizer.tokenizer, num_proc),
             min_seq_length,
-            max_seq_length,
+            max_seq_length + 1,
             tokenizer.pad_token_id,
         )
     else:
         dataset = _tokenize_truncate(
-            dataset, tokenizer.tokenizer, max_seq_length, num_proc
+            dataset, tokenizer.tokenizer, max_seq_length + 1, num_proc
         )
 
     metadata = {

@@ -31,7 +31,6 @@ class Transformer(nn.Module):
     def forward(
         self, x: Int[Tensor, "batch seq"], pad_mask: Int[Tensor, "batch seq"],
     ) -> Float[Tensor, "batch seq vocab_size"]:
-        print(self.causal_mask, pad_mask)
         mask = self.causal_mask & pad_mask[:, None, None, :]
 
         x = self.token_emb(x)

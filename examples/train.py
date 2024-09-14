@@ -9,17 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 from datasets import load_from_disk
-from jaxtyping import Int
-from rich.console import Console
-from rich.progress import BarColumn
-from rich.progress import MofNCompleteColumn
-from rich.progress import Progress
-from rich.progress import SpinnerColumn
-from rich.progress import TaskProgressColumn
-from rich.progress import TextColumn
-from rich.progress import TimeElapsedColumn
-from rich.table import Table
-from torch import Tensor
 from torch.utils.data import DataLoader
 
 from merge.architectures.llama import Llama
@@ -29,7 +18,7 @@ from merge.utils.tools import auto_device
 from merge.utils.tools import get_gpu_memory
 from merge.utils.tools import get_system_stats
 
-console = Console()
+from logger import TrainingLogger
 
 model_config = LlamaConfig(
     vocab_size=50257,
@@ -53,7 +42,7 @@ model_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 32,
+    "batch_size": 1,
     "learning_rate": 5e-5,
     "num_epochs": 10,
     "eval_every": 100,
@@ -69,8 +58,6 @@ dataset_dir = Path(
 
 
 device = auto_device()
-console.print(f"[blue]Using device: {device}")
-
 
 def setup_wandb(config: Dict[str, Any]) -> None:
     wandb.init(
@@ -78,6 +65,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         config=config,
         notes="LLaMA architecture training on TinyStories",
         tags=["llama", "tinystories", "pre-training"],
+        mode="disabled",
     )
 
 
@@ -86,69 +74,47 @@ def validate(
     model: nn.Module,
     total_tokens: int,
     device: torch.device,
+    logger: TrainingLogger,
     ignore_index: int = -1,
-) -> None:
-
+) -> Dict[str, float]:
     model.eval()
     total_loss = 0
-    total_tokens = 0
+    val_tokens = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-    ) as progress:
-        validate_task = progress.add_task(
-            "[yellow]Validating...", total=len(test_dataloader)
-        )
+    logger.start_validation(len(test_dataloader))
 
-        with torch.no_grad():
-            for batch in test_dataloader:
-                input_ids = batch["input_ids"][:, :-1].to(device)
-                target_ids = batch["input_ids"][:, 1:].to(device)
-                attention_mask = batch["attention_mask"][:, :-1].to(device)
+    with torch.no_grad():
+        for batch in test_dataloader:
+            input_ids = batch["input_ids"][:, :-1].to(device)
+            target_ids = batch["input_ids"][:, 1:].to(device)
+            attention_mask = batch["attention_mask"][:, :-1].to(device)
 
-                logits = model(input_ids, attention_mask)
-                batch_size, seq_len, vocab_size = logits.size()
+            logits = model(input_ids, attention_mask)
+            batch_size, seq_len, vocab_size = logits.size()
 
-                logits = logits.reshape(batch_size * seq_len, vocab_size)
-                target_ids = target_ids.reshape(batch_size * seq_len)
+            logits = logits.reshape(batch_size * seq_len, vocab_size)
+            target_ids = target_ids.reshape(batch_size * seq_len)
 
-                loss = F.cross_entropy(
-                    logits, target_ids, ignore_index=ignore_index, reduction="sum"
-                )
+            loss = F.cross_entropy(
+                logits, target_ids, ignore_index=ignore_index, reduction="sum"
+            )
 
-                total_loss += loss.item()
-                total_tokens += attention_mask.sum().item()
+            total_loss += loss.item()
+            val_tokens += attention_mask.sum().item()
 
-                progress.advance(validate_task)
+            logger.advance_validation()
 
-    avg_loss = total_loss / total_tokens
+    avg_loss = total_loss / val_tokens
     clipped_loss = min(avg_loss, 100)
     perplexity = torch.exp(torch.tensor(clipped_loss))
 
     metrics = {
         "val/loss": avg_loss,
         "val/perplexity": perplexity.item(),
-        **get_gpu_memory(),
-        **get_system_stats(),
     }
-
-    wandb.log(metrics, step=total_tokens)
     
-    table = Table(title=f"Validation Metrics (at {total_tokens:,} tokens)")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="magenta")
-
-    for name, value in metrics.items():
-        if isinstance(value, float):
-            table.add_row(name, f"{value:.4f}")
-        else:
-            table.add_row(name, str(value))
-
-    console.print(table)
+    logger.end_validation(metrics, total_tokens)
+    return metrics
 
 
 def train(
@@ -162,39 +128,20 @@ def train(
     eval_every: int = 100,
     ignore_index: int = -1,
 ) -> None:
-
     model.train()
     total_steps = 0
+    total_tokens = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-    ) as progress:
+    with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
+        logger.start_training(device)
         for epoch in range(num_epochs):
-
-            console.rule(f"[bold cyan]Epoch {epoch + 1}/{num_epochs}")
-            wandb.log({"epoch": epoch + 1}, step=total_tokens)
-
-            epoch_task = progress.add_task(
-                f"[green]Epoch {epoch + 1}/{num_epochs}",
-                total=len(train_dataloader)
-            )
+            logger.start_epoch(epoch, total_tokens)
 
             for batch in train_dataloader:
                 optimizer.zero_grad()
-                input_ids: Int[Tensor, "batch seq"] = batch["input_ids"][:, :-1].to(
-                    device
-                )
-                target_ids: Int[Tensor, "batch seq"] = batch["input_ids"][:, 1:].to(
-                    device
-                )
-                attention_mask: Int[Tensor, "batch seq"] = batch["attention_mask"][
-                    :, :-1
-                ].to(device)
+                input_ids = batch["input_ids"][:, :-1].to(device)
+                target_ids = batch["input_ids"][:, 1:].to(device)
+                attention_mask = batch["attention_mask"][:, :-1].to(device)
 
                 logits = model(input_ids, attention_mask)
 
@@ -226,25 +173,17 @@ def train(
                         **get_gpu_memory(),
                         **get_system_stats(),
                     }
-                    wandb.log(metrics, step=total_tokens)  # Use tokens as step
-
-                    # Log to console
-                    console.print(f"\nEpoch {epoch + 1}/{num_epochs}")
-                    console.print(f"Tokens processed: {total_tokens:,}")
-                    console.print(f"Loss: {loss.item():.4f}")
-                    console.print(f"Learning rate: {current_lr:.2e}")
+                    logger.log_training_step(metrics, total_tokens)
 
                     # Run validation
                     model.eval()
-                    validate(val_dataloader, model, total_tokens, device, ignore_index)
+                    validate(val_dataloader, model, total_tokens, device, logger, ignore_index)
                     model.train()
 
-                progress.advance(epoch_task)
+                logger.advance_train()
 
-            console.rule(f"[bold green]Epoch {epoch + 1} Complete")
-            console.print(f"Total tokens processed: {total_tokens:,}")
-           
-
+            logger.end_epoch(epoch, total_tokens)
+        logger.end_training()
 
 def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
     metadata_path = os.path.join(dataset_dir, "preprocessing_metadata.json")
@@ -267,7 +206,7 @@ if __name__ == "__main__":
 
     # create dataloaders
     dataset = load_from_disk(str(dataset_dir))
-    train_size = int(0.9 * len(dataset))
+    train_size = int(0.999 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_size, val_size]
@@ -305,16 +244,15 @@ if __name__ == "__main__":
         total_steps=training_config["total_steps"],
     )
 
-    console.print("[green]Starting training...")
     train(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
+        gradient_clip_norm=training_config["gradient_clip_norm"],
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
     )
-    console.print("[green]Finished training!")
     wandb.finish()
