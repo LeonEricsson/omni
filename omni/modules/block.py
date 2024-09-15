@@ -3,10 +3,10 @@ from jaxtyping import Complex
 from jaxtyping import Float
 from torch import Tensor
 
-from merge.modules.attention import ATTN_MAP
-from merge.modules.config import TransformerConfig
-from merge.modules.mlp import MLP_MAP
-from merge.modules.norm import NORM_MAP
+from omni.modules.attention import ATTN_MAP
+from omni.modules.config import TransformerConfig
+from omni.modules.mlp import MLP_MAP
+from omni.modules.norm import NORM_MAP
 
 
 class Block(nn.Module):

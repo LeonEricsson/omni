@@ -11,12 +11,12 @@ import wandb
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 
-from merge.architectures.llama import Llama
-from merge.architectures.llama import LlamaConfig
-from merge.utils.lr_schedule import CosineWarmupScheduler
-from merge.utils.tools import auto_device
-from merge.utils.tools import get_gpu_memory
-from merge.utils.tools import get_system_stats
+from omni.architectures.llama import Llama
+from omni.architectures.llama import LlamaConfig
+from omni.utils.lr_schedule import CosineWarmupScheduler
+from omni.utils.tools import auto_device
+from omni.utils.tools import get_gpu_memory
+from omni.utils.tools import get_system_stats
 
 from logger import TrainingLogger
 

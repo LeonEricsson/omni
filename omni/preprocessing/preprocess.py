@@ -12,7 +12,7 @@ from jaxtyping import Bool
 from jaxtyping import Int
 from torch import Tensor
 
-from merge.preprocessing.tokenizer import AutoTokenizer
+from omni.preprocessing.tokenizer import AutoTokenizer
 
 
 def prepare_dataset(

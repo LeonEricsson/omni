@@ -8,7 +8,7 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
-from merge.modules.transformer import Transformer
+from omni.modules.transformer import Transformer
 
 
 @dataclass

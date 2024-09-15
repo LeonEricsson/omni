@@ -3,11 +3,11 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
-from merge.modules.attention import causal_attention_mask
-from merge.modules.block import Block
-from merge.modules.config import TransformerConfig
-from merge.modules.norm import NORM_MAP
-from merge.modules.pos_embeddings import PositionEncoding
+from omni.modules.attention import causal_attention_mask
+from omni.modules.block import Block
+from omni.modules.config import TransformerConfig
+from omni.modules.norm import NORM_MAP
+from omni.modules.pos_embeddings import PositionEncoding
 
 
 class Transformer(nn.Module):

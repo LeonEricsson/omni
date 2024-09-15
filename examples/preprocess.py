@@ -1,5 +1,5 @@
-from merge.preprocessing.preprocess import prepare_dataset
-from merge.preprocessing.tokenizer import AutoTokenizer
+from omni.preprocessing.preprocess import prepare_dataset
+from omni.preprocessing.tokenizer import AutoTokenizer
 """
 Datasets from HF need to be preprocessed before they can be used for training. The
 `prepare_dataset` function is a wrapper around the preprocessing pipeline that

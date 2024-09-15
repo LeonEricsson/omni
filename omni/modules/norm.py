@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from jaxtyping import Float
 
-from merge.modules.config import TransformerConfig
+from omni.modules.config import TransformerConfig
 
 
 class RMSNorm(nn.Module):

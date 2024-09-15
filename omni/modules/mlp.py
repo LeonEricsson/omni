@@ -1,8 +1,8 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
-from merge.modules.activations import ACT2FN
-from merge.modules.config import TransformerConfig
+from omni.modules.activations import ACT2FN
+from omni.modules.config import TransformerConfig
 
 
 class MLP(nn.Module):

@@ -11,7 +11,7 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
-from merge.modules.config import TransformerConfig
+from omni.modules.config import TransformerConfig
 
 MHATensor: TypeAlias = Float[Tensor, "batch heads seq head_dim"]
 PositionEncodingType = Literal["rope", "absolute"]
