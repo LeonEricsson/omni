@@ -1,14 +1,8 @@
 from dataclasses import dataclass
-from dataclasses import field
 
-import torch
-import torch.nn as nn
 from jaxtyping import Bool
 from jaxtyping import Float
 from jaxtyping import Int
-from torch import Tensor
-
-from omni.modules.transformer import Transformer
 
 
 @dataclass
@@ -31,15 +25,3 @@ class LlamaConfig:
     mlp: str = "mlp_swiglu"
     normalization: str = "rmsnorm"
     attention: str = "gqa"
-
-
-class Llama(Transformer):
-    def __init__(self, config: LlamaConfig):
-        if not isinstance(config, LlamaConfig):
-            raise TypeError("Llama model requires a LlamaConfig instance")
-        super().__init__(config)
-
-    def forward(
-        self, x: Int[Tensor, "batch seq"], pad_mask: Int[Tensor, "batch seq"],
-    ) -> Float[Tensor, "batch seq vocab_size"]:
-        return super().forward(x, pad_mask)

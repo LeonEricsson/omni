@@ -7,21 +7,20 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 
-from omni.architectures.llama import Llama
+import wandb
+from logger import TrainingLogger
 from omni.architectures.llama import LlamaConfig
+from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.tools import auto_device
 from omni.utils.tools import get_gpu_memory
 from omni.utils.tools import get_system_stats
 
-from logger import TrainingLogger
-
 model_config = LlamaConfig(
-    vocab_size=50257,
+    vocab_size=50258,
     seq_len=512,
     d_model=256,
     hidden_dim=512,
@@ -42,10 +41,10 @@ model_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 1,
+    "batch_size": 32,
     "learning_rate": 5e-5,
     "num_epochs": 10,
-    "eval_every": 100,
+    "eval_every": 5000,
     "warmup_steps": 1000,
     "total_steps": 10000,
     "gradient_clip_norm": 1.0,
@@ -58,6 +57,8 @@ dataset_dir = Path(
 
 
 device = auto_device()
+amp_available = torch.amp.autocast_mode.is_autocast_available(device.type)
+
 
 def setup_wandb(config: Dict[str, Any]) -> None:
     wandb.init(
@@ -65,7 +66,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         config=config,
         notes="LLaMA architecture training on TinyStories",
         tags=["llama", "tinystories", "pre-training"],
-        mode="disabled",
+        mode="online",
     )
 
 
@@ -89,15 +90,16 @@ def validate(
             target_ids = batch["input_ids"][:, 1:].to(device)
             attention_mask = batch["attention_mask"][:, :-1].to(device)
 
-            logits = model(input_ids, attention_mask)
-            batch_size, seq_len, vocab_size = logits.size()
+            with torch.autocast(device.type, enabled=amp_available):
+                logits = model(input_ids, attention_mask)
+                batch_size, seq_len, vocab_size = logits.size()
 
-            logits = logits.reshape(batch_size * seq_len, vocab_size)
-            target_ids = target_ids.reshape(batch_size * seq_len)
+                logits = logits.reshape(batch_size * seq_len, vocab_size)
+                target_ids = target_ids.reshape(batch_size * seq_len)
 
-            loss = F.cross_entropy(
-                logits, target_ids, ignore_index=ignore_index, reduction="sum"
-            )
+                loss = F.cross_entropy(
+                    logits, target_ids, ignore_index=ignore_index, reduction="sum"
+                )
 
             total_loss += loss.item()
             val_tokens += attention_mask.sum().item()
@@ -112,7 +114,7 @@ def validate(
         "val/loss": avg_loss,
         "val/perplexity": perplexity.item(),
     }
-    
+
     logger.end_validation(metrics, total_tokens)
     return metrics
 
@@ -132,6 +134,8 @@ def train(
     total_steps = 0
     total_tokens = 0
 
+    scaler = torch.amp.GradScaler()
+
     with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
         logger.start_training(device)
         for epoch in range(num_epochs):
@@ -143,19 +147,24 @@ def train(
                 target_ids = batch["input_ids"][:, 1:].to(device)
                 attention_mask = batch["attention_mask"][:, :-1].to(device)
 
-                logits = model(input_ids, attention_mask)
+                with torch.autocast(device.type, enabled=amp_available):
+                    logits = model(input_ids, attention_mask)
 
-                batch, seq, vocab_size = logits.size()
-                logits = logits.reshape(batch * seq, vocab_size)
-                target_ids = target_ids.reshape(batch * seq)
-                loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
-                loss.backward()
+                    batch, seq, vocab_size = logits.size()
+                    logits = logits.reshape(batch * seq, vocab_size)
+                    target_ids = target_ids.reshape(batch * seq)
+                    loss = F.cross_entropy(
+                        logits, target_ids, ignore_index=ignore_index
+                    )
+
+                scaler.scale(loss).backward()
 
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_norm=gradient_clip_norm
                 )
 
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 scheduler.step()
 
                 total_steps += 1
@@ -164,26 +173,40 @@ def train(
 
                 if total_steps % eval_every == 0:
                     current_lr = scheduler.get_last_lr()[0]
+                    # metrics = {
+                    #     "train/loss": loss.item(),
+                    #     "train/learning_rate": current_lr,
+                    #     "train/epoch": epoch + 1,
+                    #     "train/step": total_steps,
+                    #     "train/total_tokens": total_tokens,
+                    #     **get_gpu_memory(),
+                    #     **get_system_stats(),
+                    # }
                     metrics = {
                         "train/loss": loss.item(),
                         "train/learning_rate": current_lr,
-                        "train/epoch": epoch + 1,
-                        "train/step": total_steps,
-                        "train/total_tokens": total_tokens,
-                        **get_gpu_memory(),
-                        **get_system_stats(),
+                        "Epoch": epoch + 1,
+                        "Tokens": total_tokens,
                     }
-                    logger.log_training_step(metrics, total_tokens)
+                    logger.log_training_step(metrics, total_steps)
 
                     # Run validation
                     model.eval()
-                    validate(val_dataloader, model, total_tokens, device, logger, ignore_index)
+                    validate(
+                        val_dataloader,
+                        model,
+                        total_tokens,
+                        device,
+                        logger,
+                        ignore_index,
+                    )
                     model.train()
 
                 logger.advance_train()
 
             logger.end_epoch(epoch, total_tokens)
         logger.end_training()
+
 
 def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
     metadata_path = os.path.join(dataset_dir, "preprocessing_metadata.json")
@@ -227,7 +250,7 @@ if __name__ == "__main__":
         pin_memory=True,
     )
 
-    model = Llama(model_config).to(device)
+    model = Transformer(model_config).to(device)
     if torch.cuda.is_available():
         model = torch.compile(model)
 
