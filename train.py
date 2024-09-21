@@ -1,6 +1,8 @@
 import json
 import os
+import time
 from pathlib import Path
+from random import sample
 from typing import Any
 from typing import Dict
 
@@ -9,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
+from torch.utils.data import Subset
 
 import wandb
 from logger import TrainingLogger
@@ -16,8 +19,6 @@ from omni.architectures.llama import LlamaConfig
 from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.tools import auto_device
-from omni.utils.tools import get_gpu_memory
-from omni.utils.tools import get_system_stats
 
 model_config = LlamaConfig(
     vocab_size=50258,
@@ -41,12 +42,13 @@ model_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 32,
-    "learning_rate": 5e-5,
+    "batch_size": 48,
+    "learning_rate": 5e-4,
+    "min_lr": 1e-7,
     "num_epochs": 10,
-    "eval_every": 5000,
+    "eval_every": 500,
     "warmup_steps": 1000,
-    "total_steps": 10000,
+    "tot_steps": 50000,
     "gradient_clip_norm": 1.0,
     "seed": 42,
 }
@@ -73,7 +75,6 @@ def setup_wandb(config: Dict[str, Any]) -> None:
 def validate(
     test_dataloader: DataLoader,
     model: nn.Module,
-    total_tokens: int,
     device: torch.device,
     logger: TrainingLogger,
     ignore_index: int = -1,
@@ -115,7 +116,6 @@ def validate(
         "val/perplexity": perplexity.item(),
     }
 
-    logger.end_validation(metrics, total_tokens)
     return metrics
 
 
@@ -129,17 +129,19 @@ def train(
     gradient_clip_norm: float,
     eval_every: int = 100,
     ignore_index: int = -1,
-) -> None:
+):
     model.train()
     total_steps = 0
     total_tokens = 0
+
+    start_time = time.perf_counter()
 
     scaler = torch.amp.GradScaler()
 
     with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
         logger.start_training(device)
         for epoch in range(num_epochs):
-            logger.start_epoch(epoch, total_tokens)
+            logger.start_epoch(epoch, total_steps)
 
             for batch in train_dataloader:
                 optimizer.zero_grad()
@@ -172,40 +174,58 @@ def train(
                 total_tokens += batch_tokens
 
                 if total_steps % eval_every == 0:
-                    current_lr = scheduler.get_last_lr()[0]
-                    # metrics = {
-                    #     "train/loss": loss.item(),
-                    #     "train/learning_rate": current_lr,
-                    #     "train/epoch": epoch + 1,
-                    #     "train/step": total_steps,
-                    #     "train/total_tokens": total_tokens,
-                    #     **get_gpu_memory(),
-                    #     **get_system_stats(),
-                    # }
-                    metrics = {
+                    elapsed_time = time.perf_counter() - start_time
+                    tokens_per_second = total_tokens / elapsed_time
+                    train_metrics = {
                         "train/loss": loss.item(),
-                        "train/learning_rate": current_lr,
-                        "Epoch": epoch + 1,
+                        "train/learning_rate": scheduler.get_last_lr()[0],
+                        "utils/tokens_per_second": tokens_per_second,
                         "Tokens": total_tokens,
                     }
-                    logger.log_training_step(metrics, total_steps)
+                    logger.log_training_step(train_metrics, total_steps)
 
                     # Run validation
                     model.eval()
-                    validate(
+                    validation_metrics = validate(
                         val_dataloader,
                         model,
-                        total_tokens,
                         device,
                         logger,
                         ignore_index,
                     )
+                    logger.log_validation_step(validation_metrics, total_steps)
                     model.train()
 
                 logger.advance_train()
 
             logger.end_epoch(epoch, total_tokens)
         logger.end_training()
+
+
+def sanity_check(dataset, model, ignore_index):
+    subset_indices = sample(range(len(dataset)), 64)
+    subset = Subset(dataset, subset_indices)
+    dataloader = DataLoader(subset, batch_size=64, shuffle=True)
+
+    batch = next(iter(dataloader))
+    input_ids = batch["input_ids"][:, :-1].to(device)
+    target_ids = batch["input_ids"][:, 1:].to(device)
+    attention_mask = batch["attention_mask"][:, :-1].to(device)
+
+    with torch.autocast(device.type, enabled=amp_available):
+        logits = model(input_ids, attention_mask)
+        batch_size, seq_len, vocab_size = logits.size()
+
+        logits = logits.reshape(batch_size * seq_len, vocab_size)
+        target_ids = target_ids.reshape(batch_size * seq_len)
+
+        loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
+
+    expected_loss = torch.log(torch.tensor(vocab_size))
+    assert torch.isclose(loss, expected_loss, atol=0.25), (
+        f"Model is not initialized correctly. "
+        f"Expected loss to be close to {expected_loss} but got {loss}"
+    )
 
 
 def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
@@ -229,7 +249,7 @@ if __name__ == "__main__":
 
     # create dataloaders
     dataset = load_from_disk(str(dataset_dir))
-    train_size = int(0.999 * len(dataset))
+    train_size = int(0.975 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_size, val_size]
@@ -264,8 +284,11 @@ if __name__ == "__main__":
     scheduler = CosineWarmupScheduler(
         optimizer,
         warmup_steps=training_config["warmup_steps"],
-        total_steps=training_config["total_steps"],
+        total_steps=training_config["tot_steps"],
+        min_lr=training_config["min_lr"],
     )
+
+    sanity_check(dataset, model, ignore_index=pad_token_id)
 
     train(
         train_dataloader=train_dataloader,
