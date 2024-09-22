@@ -1,5 +1,5 @@
 """
-A training example for a 20M parameter Llama style transformer on the TinyStories dataset.
+A training example for a 20M parameter Llama style transformer on the TinyStories dataset - using Pytorch Lightning Fabric.
 """
 
 import json
@@ -11,9 +11,10 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 import wandb
 from datasets import load_from_disk
-from torch.utils.data import DataLoader
+from lightning.fabric import Fabric
 
 from omni.architectures.llama import Llama
 from omni.architectures.llama import LlamaConfig
@@ -195,7 +196,9 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-if __name__ == "__main__":
+def main():
+    fabric = Fabric(accelerator=device, devices=1)
+
     torch.manual_seed(training_config["seed"])
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(training_config["seed"])
@@ -260,3 +263,7 @@ if __name__ == "__main__":
         ignore_index=pad_token_id,
     )
     wandb.finish()
+
+
+if __name__ == "__main__":
+    main()

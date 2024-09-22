@@ -1,7 +1,7 @@
 from typing import Literal
-from typing import Optional
 from typing import Tuple
 from typing import TypeAlias
+from typing import get_args
 
 import torch
 import torch.nn as nn
@@ -14,8 +14,6 @@ from torch import Tensor
 from omni.modules.config import TransformerConfig
 
 MHATensor: TypeAlias = Float[Tensor, "batch heads seq head_dim"]
-PositionEncodingType = Literal["rope", "absolute"]
-
 
 def _create_absolute_positions(d_model: int, seq_len: int) -> torch.Tensor:
     """
@@ -91,8 +89,10 @@ def apply_rope(
     return real_q.type_as(q), real_k.type_as(k)
 
 
+POS_ENCODING_SCHEME = Literal["rope", "absolute"]
+
 class PositionEncoding(nn.Module):
-    VALID_TYPES: set[str] = {"rope", "absolute"}
+    VALID_TYPES = set(get_args(POS_ENCODING_SCHEME))
 
     def __init__(self, config: TransformerConfig):
         super().__init__()

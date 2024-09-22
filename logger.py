@@ -1,3 +1,10 @@
+"""
+Refactored logger for training and validation. The `TrainingLogger` class is a context
+manager that handles logging for both training and validation. It uses the `rich`
+library to display progress bars and other information in the console. The `wandb`
+library is used to log training, validation and system performance metrics.
+"""
+
 from typing import Dict
 
 from rich.console import Console

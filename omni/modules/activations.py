@@ -1,4 +1,9 @@
+from typing import Literal
+
 import torch.nn.functional as F
+
+
+ACTIVATION_FN = Literal["relu", "gelu", "tanh", "silu", "sigmoid", "identity", "none"]
 
 ACT2FN = {
     "relu": F.relu,

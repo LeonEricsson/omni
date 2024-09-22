@@ -4,6 +4,9 @@ from jaxtyping import Bool
 from jaxtyping import Float
 from jaxtyping import Int
 
+from omni.modules.pos_embeddings import POS_ENCODING_SCHEME
+from omni.modules.activations import ACTIVATION_FN
+
 
 @dataclass
 class TransformerConfig:
@@ -20,7 +23,7 @@ class TransformerConfig:
     attention_dropout: Float
     rope_theta: Float
     norm_eps: Float
-    pos_encoding_type: str  # rope, absolute
+    pos_encoding_type: PosEncodingScheme
     activation_fn: str  # relu, gelu, silu, tanh
     mlp: str  # mlp, mlp_swiglu
     normalization: str  # rmsnorm, layernorm, none
