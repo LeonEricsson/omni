@@ -1,11 +1,15 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from jaxtyping import Bool
 from jaxtyping import Float
 from jaxtyping import Int
 
-from omni.modules.pos_embeddings import POS_ENCODING_SCHEME
-from omni.modules.activations import ACTIVATION_FN
+from omni.modules.activations import ActivationFunction
+from omni.modules.attention import AttentionType
+from omni.modules.mlp import MLPType
+from omni.modules.norm import NormalizationType
+from omni.modules.pos_embeddings import PositionEmbeddingScheme
 
 
 @dataclass
@@ -17,14 +21,17 @@ class TransformerConfig:
     num_heads: Int
     num_kv_heads: Int
     num_layers: Int
-    mlp_bias: Bool
-    mlp_dropout: Float
-    attention_bias: Bool
-    attention_dropout: Float
-    rope_theta: Float
-    norm_eps: Float
-    pos_encoding_type: PosEncodingScheme
-    activation_fn: str  # relu, gelu, silu, tanh
-    mlp: str  # mlp, mlp_swiglu
-    normalization: str  # rmsnorm, layernorm, none
-    attention: str  # mha
+
+    # components
+    pos_encoding_type: PositionEmbeddingScheme
+    activation_fn: ActivationFunction
+    mlp: MLPType
+    normalization: NormalizationType
+    attention: AttentionType
+
+    mlp_bias: Bool = True
+    mlp_dropout: Optional[Float] = None
+    attention_bias: Bool = True
+    attention_dropout: Optional[Float] = None
+    rope_theta: Float = 10000.0
+    norm_eps: Float = 1e-5

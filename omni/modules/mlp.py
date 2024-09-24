@@ -1,12 +1,15 @@
+from typing import Literal
+
 import torch.nn as nn
 import torch.nn.functional as F
 
 from omni.modules.activations import ACT2FN
-from omni.modules.config import TransformerConfig
+
+MLPType = Literal["mlp", "mlp_swiglu"]
 
 
 class MLP(nn.Module):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config):
         """
         MLP - Transformer specific with 2 linear transformations.
         Args:
@@ -25,10 +28,12 @@ class MLP(nn.Module):
                 (hidden_dim + 4 - 1) // 4
             )  # ensure hidden_dim is divisible by 4
 
-        self.up = nn.Linear(config.d_model, hidden_dim, bias=config.bias)
-        self.down = nn.Linear(hidden_dim, config.d_model, bias=config.bias)
+        self.up = nn.Linear(config.d_model, hidden_dim, bias=config.mlp_bias)
+        self.down = nn.Linear(hidden_dim, config.d_model, bias=config.mlp_bias)
         self.activation_fn = ACT2FN[config.activation_fn]
-        self.dropout = nn.Dropout(config.dropout) if config.dropout else lambda x: x
+        self.dropout = (
+            nn.Dropout(config.mlp_dropout) if config.mlp_dropout else lambda x: x
+        )
 
     def forward(self, x):
         x = self.up(x)
@@ -39,7 +44,7 @@ class MLP(nn.Module):
 
 
 class MLPSwiGLU(nn.Module):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config):
         """
         SwiGLU Feed Forward Network - Transformer specific (2 layers, 1 of which is gated).
 

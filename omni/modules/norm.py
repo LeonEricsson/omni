@@ -1,14 +1,16 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 from jaxtyping import Float
 
-from omni.modules.config import TransformerConfig
+NormalizationType = Literal["rmsnorm", "layernorm", "none"]
 
 
 class RMSNorm(nn.Module):
     def __init__(
         self,
-        config: TransformerConfig,
+        config,
         eps: Float = 1e-5,
     ):
         """
@@ -39,7 +41,7 @@ class RMSNorm(nn.Module):
 class LayerNorm(nn.Module):
     def __init__(
         self,
-        config: TransformerConfig,
+        config,
         eps: Float = 1e-5,
     ):
         """

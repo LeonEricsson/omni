@@ -1,3 +1,4 @@
+from typing import Literal
 from typing import Optional
 
 import torch
@@ -8,11 +9,15 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
-from omni.modules.config import TransformerConfig
 from omni.modules.pos_embeddings import apply_rope
 
+AttentionType = Literal["mha", "gqa"]
+
+
 def causal_attention_mask(sequence_length: Int) -> Float[Int, "1 1 seq seq"]:
-    mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length), dtype=torch.int32))
+    mask = torch.tril(
+        torch.ones((1, 1, sequence_length, sequence_length), dtype=torch.int32)
+    )
     return mask * 1 + (1 - mask) * -10000
 
 
@@ -33,7 +38,7 @@ class GQA(nn.Module):
         - pos_encoding_type: Type of positional encoding
     """
 
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config):
         super().__init__()
         self.num_heads = config.num_heads
         self.num_kv_heads = config.num_kv_heads
@@ -123,7 +128,7 @@ class GQA(nn.Module):
 
 
 class MHA(nn.Module):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config):
         """
         Multi-Head Attention implementing scaled dot-product attention.
 

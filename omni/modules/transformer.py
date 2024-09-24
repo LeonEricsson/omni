@@ -7,7 +7,7 @@ from omni.modules.attention import causal_attention_mask
 from omni.modules.block import Block
 from omni.modules.config import TransformerConfig
 from omni.modules.norm import NORM_MAP
-from omni.modules.pos_embeddings import PositionEncoding
+from omni.modules.pos_embeddings import PositionalEmbedding
 
 
 class Transformer(nn.Module):
@@ -16,7 +16,7 @@ class Transformer(nn.Module):
 
         self.token_emb = nn.Embedding(config.vocab_size, config.d_model)
 
-        self.pos_encoding = PositionEncoding(config)
+        self.position_embedding = PositionalEmbedding(config)
 
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
 
@@ -35,7 +35,7 @@ class Transformer(nn.Module):
 
         x = self.token_emb(x)
 
-        x, pos_info = self.pos_encoding(x)
+        x, pos_info = self.position_embedding(x)
 
         for block in self.blocks:
             x = block(x, mask, pos_info)

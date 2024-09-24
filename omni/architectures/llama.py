@@ -4,6 +4,12 @@ from jaxtyping import Bool
 from jaxtyping import Float
 from jaxtyping import Int
 
+from omni.modules.activations import ActivationFunction
+from omni.modules.attention import AttentionType
+from omni.modules.mlp import MLPType
+from omni.modules.norm import NormalizationType
+from omni.modules.pos_embeddings import PositionEmbeddingScheme
+
 
 @dataclass
 class LlamaConfig:
@@ -14,14 +20,17 @@ class LlamaConfig:
     num_heads: Int
     num_kv_heads: Int
     num_layers: Int
-    rope_theta: Float
-    norm_eps: Float
-    activation_fn: str = "silu"  # relu, gelu, silu, tanh
+
+    # components
+    pos_encoding_type: PositionEmbeddingScheme = "rope"
+    activation_fn: ActivationFunction = "silu"
+    mlp: MLPType = "mlp_swiglu"
+    normalization: NormalizationType = "rmsnorm"
+    attention: AttentionType = "gqa"
+
     mlp_bias: Bool = False
     mlp_dropout: Float = False
     attention_bias: Bool = False
     attention_dropout: Float = 0.0
-    pos_encoding_type: str = "rope"
-    mlp: str = "mlp_swiglu"
-    normalization: str = "rmsnorm"
-    attention: str = "gqa"
+    rope_theta: Float = 10000.0
+    norm_eps: Float = 1e-5
