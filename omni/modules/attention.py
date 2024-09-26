@@ -9,7 +9,7 @@ from jaxtyping import Float
 from jaxtyping import Int
 from torch import Tensor
 
-from omni.modules.pos_embeddings import apply_rope
+from omni.modules.pos_embeddings import apply_rope_real
 
 AttentionType = Literal["mha", "gqa"]
 
@@ -99,7 +99,7 @@ class GQA(nn.Module):
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
-            q, k = apply_rope(q, k, freq_cis)
+            q, k = apply_rope_real(q, k, freq_cis)
 
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
@@ -181,7 +181,7 @@ class MHA(nn.Module):
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
-            q, k = apply_rope(q, k, freq_cis)
+            q, k = apply_rope_real(q, k, freq_cis)
 
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
