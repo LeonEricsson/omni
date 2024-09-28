@@ -182,13 +182,7 @@ def train(
 
                 with torch.autocast(device.type, enabled=amp_available):
                     logits = model(input_ids, attention_mask)
-
-                    batch, seq, vocab_size = logits.size()
-                    logits = logits.reshape(batch * seq, vocab_size)
-                    target_ids = target_ids.reshape(batch * seq)
-                    loss = F.cross_entropy(
-                        logits, target_ids, ignore_index=ignore_index
-                    )
+                    loss = cross_entropy_loss(logits, target_ids, ignore_index)
 
                 scaler.scale(loss).backward()
 
@@ -208,10 +202,8 @@ def train(
                     elapsed_time = time.perf_counter() - start_time
                     tokens_per_second = total_tokens / elapsed_time
                     train_metrics = {
-                        "train/loss": loss.item(),
                         "train/learning_rate": scheduler.get_last_lr()[0],
                         "utils/tokens_per_second": tokens_per_second,
-                        "Tokens": total_tokens,
                     }
                     logger.log_training_step(train_metrics, total_steps)
 
@@ -227,10 +219,22 @@ def train(
                     logger.log_validation_step(validation_metrics, total_steps)
                     model.train()
 
+                train_metrics = {
+                    "train/loss": loss.item(),
+                    "Tokens": total_tokens,
+                }
+                logger.log_training_step(train_metrics, total_steps)
                 logger.advance_train()
 
-            logger.end_epoch(epoch, total_tokens)
+            logger.end_epoch(epoch, total_steps)
         logger.end_training()
+
+
+def cross_entropy_loss(logits, target_ids, ignore_index):
+    batch_size, seq_len, vocab_size = logits.size()
+    logits = logits.reshape(batch_size * seq_len, vocab_size)
+    target_ids = target_ids.reshape(batch_size * seq_len)
+    return F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
 
 
 def sanity_check(dataset, model, ignore_index):
