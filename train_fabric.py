@@ -1,5 +1,6 @@
 """
-A training example for a 20M parameter Llama style transformer on the TinyStories dataset.
+A training example for a 20M parameter Llama style transformer on the TinyStories dataset
+- using PyTorch Lightning Fabric.
 """
 
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 from random import sample
 from typing import Any, Dict
 
+import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,6 +23,8 @@ from omni.architectures.llama import LlamaConfig
 from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.tools import auto_device
+
+torch.set_float32_matmul_precision(precision="high")
 
 model_config = LlamaConfig(
     vocab_size=50258,
@@ -44,7 +48,7 @@ model_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 48,
+    "batch_size": 1,
     "learning_rate": 5e-4,
     "min_lr": 1e-7,
     "num_epochs": 10,
@@ -53,16 +57,15 @@ training_config = {
     "tot_steps": 50000,
     "gradient_clip_norm": 1.0,
     "seed": 42,
-    "device": None,
+    "device": None,  # auto-detect
+    "precision": "16-mixed",
 }
 
 dataset_dir = Path(
     "data/pretokenized_roneneldan_TinyStories"
 )  # pretokenized - run preprocess.py first
 
-
 device = auto_device(training_config["device"])
-amp_available = torch.amp.autocast_mode.is_autocast_available(device.type)
 
 
 def setup_wandb(config: Dict[str, Any]) -> None:
@@ -76,9 +79,8 @@ def setup_wandb(config: Dict[str, Any]) -> None:
 
 
 def validate(
-    test_dataloader: DataLoader,
+    val_dataloader: DataLoader,
     model: nn.Module,
-    device: torch.device,
     logger: TrainingLogger,
     ignore_index: int = -1,
 ) -> Dict[str, float]:
@@ -87,9 +89,8 @@ def validate(
 
     Args:
         val_dataloader (DataLoader): DataLoader for validation data.
-        model (nn.Module): Model to be validated.
+        model (L.LightningModule): Model to be validated.
         total_tokens (int): Total number of tokens processed.
-        device (torch.device): Device to run the validation on.
         logger (TrainingLogger): Logger for tracking validation metrics.
         ignore_index (int): Index to ignore in the loss calculation.
 
@@ -100,24 +101,23 @@ def validate(
     total_loss = 0
     val_tokens = 0
 
-    logger.start_validation(len(test_dataloader))
+    logger.start_validation(len(val_dataloader))
 
     with torch.no_grad():
-        for batch in test_dataloader:
-            input_ids = batch["input_ids"][:, :-1].to(device)
-            target_ids = batch["input_ids"][:, 1:].to(device)
-            attention_mask = batch["attention_mask"][:, :-1].to(device)
+        for batch in val_dataloader:
+            input_ids = batch["input_ids"][:, :-1]
+            target_ids = batch["input_ids"][:, 1:]
+            attention_mask = batch["attention_mask"][:, :-1]
 
-            with torch.autocast(device.type, enabled=amp_available):
-                logits = model(input_ids, attention_mask)
-                batch_size, seq_len, vocab_size = logits.size()
+            logits = model(input_ids, attention_mask)
+            batch_size, seq_len, vocab_size = logits.size()
 
-                logits = logits.reshape(batch_size * seq_len, vocab_size)
-                target_ids = target_ids.reshape(batch_size * seq_len)
+            logits = logits.reshape(batch_size * seq_len, vocab_size)
+            target_ids = target_ids.reshape(batch_size * seq_len)
 
-                loss = F.cross_entropy(
-                    logits, target_ids, ignore_index=ignore_index, reduction="sum"
-                )
+            loss = F.cross_entropy(
+                logits, target_ids, ignore_index=ignore_index, reduction="sum"
+            )
 
             total_loss += loss.item()
             val_tokens += attention_mask.sum().item()
@@ -137,23 +137,25 @@ def validate(
 
 
 def train(
+    fabric: L.Fabric,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
-    model: nn.Module,
+    model: L.LightningModule,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
     num_epochs: int,
     gradient_clip_norm: float,
-    eval_every: int = 100,
+    eval_every: int = 500,
     ignore_index: int = -1,
-):
+) -> None:
     """
     Trains the model for 'num_epochs'.
 
     Args:
+        fabric (L.Fabric): Fabric object for distributed training.
         train_dataloader (DataLoader): DataLoader for training data.
         val_dataloader (DataLoader): DataLoader for validation data.
-        model (nn.Module): Model to be trained.
+        model (L.LightningModule): Model to be trained.
         optimizer (torch.optim.Optimizer): Optimizer for training.
         scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
         num_epochs (int): Number of epochs to train.
@@ -167,37 +169,30 @@ def train(
 
     start_time = time.perf_counter()
 
-    scaler = torch.amp.GradScaler()
-
     with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
         logger.start_training(device)
         for epoch in range(num_epochs):
-            logger.start_epoch(epoch, total_steps)
+            logger.start_epoch(epoch, total_tokens)
 
             for batch in train_dataloader:
                 optimizer.zero_grad()
-                input_ids = batch["input_ids"][:, :-1].to(device)
-                target_ids = batch["input_ids"][:, 1:].to(device)
-                attention_mask = batch["attention_mask"][:, :-1].to(device)
+                input_ids = batch["input_ids"][:, :-1]
+                target_ids = batch["input_ids"][:, 1:]
+                attention_mask = batch["attention_mask"][:, :-1]
 
-                with torch.autocast(device.type, enabled=amp_available):
-                    logits = model(input_ids, attention_mask)
+                logits = model(input_ids, attention_mask)
 
-                    batch, seq, vocab_size = logits.size()
-                    logits = logits.reshape(batch * seq, vocab_size)
-                    target_ids = target_ids.reshape(batch * seq)
-                    loss = F.cross_entropy(
-                        logits, target_ids, ignore_index=ignore_index
-                    )
-
-                scaler.scale(loss).backward()
+                batch, seq, vocab_size = logits.size()
+                logits = logits.reshape(batch * seq, vocab_size)
+                target_ids = target_ids.reshape(batch * seq)
+                loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
+                fabric.backward(loss)
 
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_norm=gradient_clip_norm
                 )
 
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 scheduler.step()
 
                 total_steps += 1
@@ -220,7 +215,6 @@ def train(
                     validation_metrics = validate(
                         val_dataloader,
                         model,
-                        device,
                         logger,
                         ignore_index,
                     )
@@ -243,14 +237,13 @@ def sanity_check(dataset, model, ignore_index):
     target_ids = batch["input_ids"][:, 1:].to(device)
     attention_mask = batch["attention_mask"][:, :-1].to(device)
 
-    with torch.autocast(device.type, enabled=amp_available):
-        logits = model(input_ids, attention_mask)
-        batch_size, seq_len, vocab_size = logits.size()
+    logits = model(input_ids, attention_mask)
+    batch_size, seq_len, vocab_size = logits.size()
 
-        logits = logits.reshape(batch_size * seq_len, vocab_size)
-        target_ids = target_ids.reshape(batch_size * seq_len)
+    logits = logits.reshape(batch_size * seq_len, vocab_size)
+    target_ids = target_ids.reshape(batch_size * seq_len)
 
-        loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
+    loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
 
     expected_loss = torch.log(torch.tensor(vocab_size))
     assert torch.isclose(loss, expected_loss, atol=0.25), (
@@ -266,9 +259,11 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
 
 
 def main():
-    torch.manual_seed(training_config["seed"])
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(training_config["seed"])
+    fabric = L.Fabric(
+        accelerator=device.type, devices=1, precision=training_config["precision"]
+    )
+    fabric.launch()
+    fabric.seed_everything(training_config["seed"])
 
     setup_wandb({**model_config.__dict__, **training_config})
 
@@ -280,7 +275,7 @@ def main():
 
     # create dataloaders
     dataset = load_from_disk(str(dataset_dir))
-    train_size = int(0.975 * len(dataset))
+    train_size = int(0.95 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_size, val_size]
@@ -301,7 +296,7 @@ def main():
         pin_memory=True,
     )
 
-    model = Transformer(model_config).to(device)
+    model = Transformer(model_config)
     if torch.cuda.is_available():
         model = torch.compile(model)
 
@@ -311,7 +306,6 @@ def main():
         betas=(0.9, 0.95),
         weight_decay=0.1,
     )
-
     scheduler = CosineWarmupScheduler(
         optimizer,
         warmup_steps=training_config["warmup_steps"],
@@ -321,7 +315,13 @@ def main():
 
     sanity_check(dataset, model, ignore_index=pad_token_id)
 
+    model, optimizer = fabric.setup(model, optimizer)
+    train_dataloader, val_dataloader = fabric.setup_dataloaders(
+        train_dataloader, val_dataloader
+    )
+
     train(
+        fabric=fabric,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         model=model,
