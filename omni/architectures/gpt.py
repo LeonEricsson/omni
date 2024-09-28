@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 
-from jaxtyping import Bool
-from jaxtyping import Float
-from jaxtyping import Int
+from jaxtyping import Bool, Float, Int
 
 from omni.modules.activations import ActivationFunction
 from omni.modules.attention import AttentionType
@@ -21,7 +19,7 @@ class GPTConfig:
     num_layers: Int
 
     # components
-    pos_encoding_type: PositionEmbeddingScheme = "learned?"
+    pos_encoding_type: PositionEmbeddingScheme = "learned"
     activation_fn: ActivationFunction = "gelu"
     mlp: MLPType = "mlp"
     normalization: NormalizationType = "layernorm"
