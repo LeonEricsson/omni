@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
+from jaxtyping import Float, Int
 from torch.utils.data import DataLoader, Subset
 
 import wandb
@@ -26,7 +27,7 @@ from omni.utils.tools import auto_device
 
 torch.set_float32_matmul_precision(precision="high")
 
-model_config = LlamaConfig(
+llama_config = LlamaConfig(
     vocab_size=50258,
     seq_len=512,
     d_model=256,
@@ -57,6 +58,7 @@ training_config = {
     "tot_steps": 50000,
     "gradient_clip_norm": 1.0,
     "seed": 42,
+    "num_workers": 4,
     "device": None,  # auto-detect
     "precision": "16-mixed",
 }
@@ -82,7 +84,7 @@ def validate(
     val_dataloader: DataLoader,
     model: nn.Module,
     logger: TrainingLogger,
-    ignore_index: int = -1,
+    ignore_index: Int = -1,
 ) -> Dict[str, float]:
     """
     Validate the model, logging loss and perplexity.
@@ -110,14 +112,7 @@ def validate(
             attention_mask = batch["attention_mask"][:, :-1]
 
             logits = model(input_ids, attention_mask)
-            batch_size, seq_len, vocab_size = logits.size()
-
-            logits = logits.reshape(batch_size * seq_len, vocab_size)
-            target_ids = target_ids.reshape(batch_size * seq_len)
-
-            loss = F.cross_entropy(
-                logits, target_ids, ignore_index=ignore_index, reduction="sum"
-            )
+            loss = cross_entropy_loss(logits, target_ids, ignore_index, reduction="sum")
 
             total_loss += loss.item()
             val_tokens += attention_mask.sum().item()
@@ -143,10 +138,11 @@ def train(
     model: L.LightningModule,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
-    num_epochs: int,
-    gradient_clip_norm: float,
-    eval_every: int = 500,
-    ignore_index: int = -1,
+    num_epochs: Int,
+    gradient_clip_norm: Float,
+    gradient_acc_steps: Int = 1,
+    eval_every: Int = 500,
+    ignore_index: Int = -1,
 ) -> None:
     """
     Trains the model for 'num_epochs'.
@@ -168,28 +164,42 @@ def train(
     total_tokens = 0
     start_time = time.perf_counter()
 
+    optimizer.zero_grad()
+
     with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
         logger.start_training(fabric.device)
         for epoch in range(num_epochs):
             logger.start_epoch(epoch, total_steps)
 
-            for batch in train_dataloader:
-                optimizer.zero_grad()
+            for step, batch in enumerate(train_dataloader, start=1):
                 input_ids = batch["input_ids"][:, :-1]
                 target_ids = batch["input_ids"][:, 1:]
                 attention_mask = batch["attention_mask"][:, :-1]
 
-                logits = model(input_ids, attention_mask)
-
-                loss = cross_entropy_loss(logits, target_ids, ignore_index)
-                fabric.backward(loss)
-
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=gradient_clip_norm
+                is_accumulating = step % gradient_acc_steps != 0 and step != len(
+                    train_dataloader
                 )
 
-                optimizer.step()
-                scheduler.step()
+                # skip .backward() synchronization during gradient accumulation
+                with fabric.no_backward_sync(model, enabled=is_accumulating):
+                    logits = model(input_ids, attention_mask)
+
+                    loss = (
+                        cross_entropy_loss(
+                            logits, target_ids, ignore_index, reduction="mean"
+                        )
+                        / gradient_acc_steps
+                    )
+                    fabric.backward(loss)
+
+                # gradient accumulation
+                if not is_accumulating:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=gradient_clip_norm
+                    )
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
                 total_steps += 1
                 batch_tokens = attention_mask.sum().item()
@@ -227,17 +237,19 @@ def train(
         logger.end_training()
 
 
-def cross_entropy_loss(logits, target_ids, ignore_index):
+def cross_entropy_loss(logits, target_ids, ignore_index, reduction):
     batch_size, seq_len, vocab_size = logits.size()
     logits = logits.reshape(batch_size * seq_len, vocab_size)
     target_ids = target_ids.reshape(batch_size * seq_len)
-    return F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
+    return F.cross_entropy(
+        logits, target_ids, ignore_index=ignore_index, reduction=reduction
+    )
 
 
 def sanity_check(dataset, model, ignore_index):
-    subset_indices = sample(range(len(dataset)), 64)
+    subset_indices = sample(range(len(dataset)), 32)
     subset = Subset(dataset, subset_indices)
-    dataloader = DataLoader(subset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(subset, batch_size=32, shuffle=True)
 
     batch = next(iter(dataloader))
     input_ids = batch["input_ids"][:, :-1]
@@ -272,15 +284,14 @@ def main():
     fabric.launch()
     fabric.seed_everything(training_config["seed"])
 
-    setup_wandb({**model_config.__dict__, **training_config})
+    setup_wandb({**llama_config.__dict__, **training_config})
 
     ### DATA ###
     data_metadata = extract_metadata(str(dataset_dir))
     max_seq_length = data_metadata["preprocessing_params"]["max_seq_length"]
     pad_token_id = data_metadata["pad_token_id"]
-    assert max_seq_length >= model_config.seq_len
+    assert max_seq_length >= llama_config.seq_len
 
-    # create dataloaders
     dataset = load_from_disk(str(dataset_dir))
     train_size = int(0.99 * len(dataset))
     val_size = len(dataset) - train_size
@@ -288,25 +299,21 @@ def main():
         dataset, [train_size, val_size]
     )
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=True,
-    )
+    def init_dataloader(dataset):
+        return DataLoader(
+            dataset,
+            batch_size=training_config["batch_size"],
+            shuffle=True,
+            num_workers=training_config["num_workers"],
+            pin_memory=True,
+            drop_last=True,  # avoid torch model recompilation
+        )
+
+    train_dataloader = init_dataloader(train_dataset)
+    val_dataloader = init_dataloader(val_dataset)
 
     ### MODEL ###
-    model = Transformer(model_config)
+    model = Transformer(llama_config)
     if torch.cuda.is_available():
         model = torch.compile(model, fullgraph=True)
 
@@ -323,7 +330,7 @@ def main():
         min_lr=training_config["min_lr"],
     )
 
-    # FIX! sanity_check(dataset, model, ignore_index=pad_token_id)
+    sanity_check(dataset, model, ignore_index=pad_token_id)
 
     model, optimizer = fabric.setup(model, optimizer)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(

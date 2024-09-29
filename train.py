@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
+from jaxtyping import Float, Int
 from torch.utils.data import DataLoader, Subset
 
 import wandb
@@ -80,7 +81,7 @@ def validate(
     model: nn.Module,
     device: torch.device,
     logger: TrainingLogger,
-    ignore_index: int = -1,
+    ignore_index: Int = -1,
 ) -> Dict[str, float]:
     """
     Validate the model, logging loss and perplexity.
@@ -110,13 +111,8 @@ def validate(
 
             with torch.autocast(device.type, enabled=amp_available):
                 logits = model(input_ids, attention_mask)
-                batch_size, seq_len, vocab_size = logits.size()
-
-                logits = logits.reshape(batch_size * seq_len, vocab_size)
-                target_ids = target_ids.reshape(batch_size * seq_len)
-
-                loss = F.cross_entropy(
-                    logits, target_ids, ignore_index=ignore_index, reduction="sum"
+                loss = cross_entropy_loss(
+                    logits, target_ids, ignore_index, reduction="sum"
                 )
 
             total_loss += loss.item()
@@ -142,10 +138,11 @@ def train(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
-    num_epochs: int,
-    gradient_clip_norm: float,
-    eval_every: int = 100,
-    ignore_index: int = -1,
+    num_epochs: Int,
+    gradient_clip_norm: Float,
+    gradient_acc_steps: Int = 1,
+    eval_every: Int = 100,
+    ignore_index: Int = -1,
 ):
     """
     Trains the model for 'num_epochs'.
@@ -167,6 +164,7 @@ def train(
 
     start_time = time.perf_counter()
 
+    optimizer.zero_grad()
     scaler = torch.amp.GradScaler()
 
     with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
@@ -174,25 +172,26 @@ def train(
         for epoch in range(num_epochs):
             logger.start_epoch(epoch, total_steps)
 
-            for batch in train_dataloader:
-                optimizer.zero_grad()
+            for step, batch in enumerate(train_dataloader, start=1):
                 input_ids = batch["input_ids"][:, :-1].to(device)
                 target_ids = batch["input_ids"][:, 1:].to(device)
                 attention_mask = batch["attention_mask"][:, :-1].to(device)
 
                 with torch.autocast(device.type, enabled=amp_available):
                     logits = model(input_ids, attention_mask)
-                    loss = cross_entropy_loss(logits, target_ids, ignore_index)
+                    loss = cross_entropy_loss(logits, target_ids, ignore_index, "mean")
 
                 scaler.scale(loss).backward()
 
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=gradient_clip_norm
-                )
-
-                scaler.step(optimizer)
-                scaler.update()
-                scheduler.step()
+                # gradient accumulation
+                if step % gradient_acc_steps == 0 or step == len(train_dataloader):
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=gradient_clip_norm
+                    )
+                    scaler.step(optimizer)
+                    scaler.update()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
                 total_steps += 1
                 batch_tokens = attention_mask.sum().item()
@@ -230,11 +229,13 @@ def train(
         logger.end_training()
 
 
-def cross_entropy_loss(logits, target_ids, ignore_index):
+def cross_entropy_loss(logits, target_ids, ignore_index, reduction):
     batch_size, seq_len, vocab_size = logits.size()
     logits = logits.reshape(batch_size * seq_len, vocab_size)
     target_ids = target_ids.reshape(batch_size * seq_len)
-    return F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
+    return F.cross_entropy(
+        logits, target_ids, ignore_index=ignore_index, reduction=reduction
+    )
 
 
 def sanity_check(dataset, model, ignore_index):
@@ -290,20 +291,18 @@ def main():
         dataset, [train_size, val_size]
     )
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-    )
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-    )
+    def init_dataloader(dataset):
+        return DataLoader(
+            dataset,
+            batch_size=training_config["batch_size"],
+            shuffle=True,
+            num_workers=training_config["num_workers"],
+            pin_memory=True,
+            drop_last=True,  # avoid torch model recompilation
+        )
+
+    train_dataloader = init_dataloader(train_dataset)
+    val_dataloader = init_dataloader(val_dataset)
 
     model = Transformer(model_config).to(device)
     if torch.cuda.is_available():
