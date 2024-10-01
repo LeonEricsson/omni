@@ -15,7 +15,7 @@ class MLP(nn.Module):
         Args:
         config (TransformerConfig): Configuration dataclass containing:
             - d_model (int): Input dimension
-            - hidden_dim (int, optional): Hidden dimension. If None, computed as 4 * (2/3 * hidden_dim)
+            - hidden_dim (int, optional): Hidden dimension. If None, computed as 4 * (2/3 * d_model)
             - activation_fn (str): Activation function name. Defaults to "relu"
             - dropout (float, optional): Dropout probability. Defaults to None
             - bias (bool): Whether to use bias. Defaults to True
@@ -23,7 +23,7 @@ class MLP(nn.Module):
         super().__init__()
         hidden_dim = config.hidden_dim
         if hidden_dim is None:
-            hidden_dim = 4 * int(2 * hidden_dim / 3)
+            hidden_dim = 4 * int(2 * config.d_model / 3)
             hidden_dim = 4 * (
                 (hidden_dim + 4 - 1) // 4
             )  # ensure hidden_dim is divisible by 4
@@ -51,7 +51,7 @@ class MLPSwiGLU(nn.Module):
         Args:
         config (TransformerConfig): Configuration dataclass containing:
             - d_model (int): The input dimension.
-            - hidden_dim (int, optional): Hidden dimension. If None, computed as 4 * (2/3 * hidden_dim)
+            - hidden_dim (int, optional): Hidden dimension. If None, computed as 4 * (2/3 * d_model)
             - dropout (float, optional): Dropout probability. Defaults to None
             - bias (bool): Whether to use bias. Defaults to False
 
@@ -61,7 +61,7 @@ class MLPSwiGLU(nn.Module):
         super().__init__()
         hidden_dim = config.hidden_dim
         if hidden_dim is None:
-            hidden_dim = 4 * int(2 * hidden_dim / 3)
+            hidden_dim = 4 * int(2 * config.d_model / 3)
             hidden_dim = 4 * (
                 (hidden_dim + 4 - 1) // 4
             )  # ensure hidden_dim is divisible by 4

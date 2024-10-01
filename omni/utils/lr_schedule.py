@@ -15,6 +15,10 @@ class CosineWarmupScheduler(LRScheduler):
         if step < self.warmup_steps:
             # Linear warmup
             return [base_lr * step / self.warmup_steps for base_lr in self.base_lrs]
+
+        elif step >= self.total_steps:
+            return [self.min_lr for _ in self.base_lrs]
+
         else:
             # Cosine decay
             progress = (step - self.warmup_steps) / (

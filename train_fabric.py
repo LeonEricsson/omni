@@ -31,7 +31,6 @@ llama_config = LlamaConfig(
     vocab_size=50258,
     seq_len=512,
     d_model=256,
-    hidden_dim=512,
     num_heads=8,
     num_kv_heads=4,
     num_layers=6,
@@ -49,15 +48,15 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 32,
+    "batch_size": 42,
     "learning_rate": 5e-4,
-    "min_lr": 1e-7,
+    "min_lr": 5e-5,
     "num_epochs": 10,
     "eval_every": 1000,
     "warmup_steps": 1000,
-    "tot_steps": 50000,
+    "tot_steps": 1e6,
     "gradient_clip_norm": 1.0,
-    "gradient_acc_steps": 1,
+    "gradient_acc_steps": 2,
     "seed": 42,
     "num_workers": 4,
     "device": None,  # auto-detect
