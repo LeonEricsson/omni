@@ -3,13 +3,15 @@ from pathlib import Path
 
 import tokenizers.processors as processors
 import torch.nn.functional as F
-from datasets import Dataset
-from datasets import DownloadMode
-from datasets import load_dataset
-from datasets import Sequence
-from datasets import Value
-from jaxtyping import Bool
-from jaxtyping import Int
+from datasets import (
+    Dataset,
+    DownloadMode,
+    Sequence,
+    Value,
+    load_dataset,
+    load_from_disk,
+)
+from jaxtyping import Bool, Int
 from torch import Tensor
 
 from omni.preprocessing.tokenizer import AutoTokenizer
@@ -44,7 +46,7 @@ def prepare_dataset(
         name: Dataset configuration name if applicable
         min_seq_length: Minimum sequence length (shorter sequences are discarded)
         max_seq_length: Maximum sequence length (longer sequences are split or truncated)
-        split_long_sequences: If True, splits sequences > max_length into chunks. If False, truncates
+        split_long_sequences: If True, splits sequences > max_length into chunks resulting in more total samples. If False, truncates
         num_proc: Number of processes for parallel preprocessing
         split: Dataset split to process ('train', 'validation'). If None, will return dict of all splits
         revision: Dataset version/revision
@@ -70,19 +72,17 @@ def prepare_dataset(
         num_proc=num_proc,
     )
 
-    # max seq length + 1 to account for bos token. input and target both trim 
+    # max seq length + 1 to account for bos token. input and target both trim
     # 1 token off the sequence from left and right respectively.
-    if split_long_sequences:
-        dataset = _process_sequences(
-            _tokenize(dataset, tokenizer.tokenizer, num_proc),
-            min_seq_length,
-            max_seq_length + 1,
-            tokenizer.pad_token_id,
-        )
-    else:
-        dataset = _tokenize_truncate(
-            dataset, tokenizer.tokenizer, max_seq_length + 1, num_proc
-        )
+    dataset = _preprocess_and_tokenize_dataset(
+        dataset,
+        tokenizer.tokenizer,
+        max_seq_length + 1,
+        split_long_sequences,
+        num_proc,
+    )
+
+    print("Final dataset: {dataset}")
 
     metadata = {
         "dataset_name": dataset_name,
@@ -116,20 +116,25 @@ def _download_dataset(
     cache_dir: Path,
     num_proc: Int,
 ) -> Dataset:
-    print("Downloading dataset...")
-    dataset = load_dataset(
-        dataset_name,
-        name=name,
-        split=split,
-        revision=revision,
-        data_dir=data_dir,
-        data_files=data_files,
-        download_mode=DownloadMode.REUSE_CACHE_IF_EXISTS,
-        cache_dir=cache_dir,
-        num_proc=num_proc,
-    )
 
-    return dataset.select_columns("text")
+    local_path = cache_dir / dataset_name
+    if local_path.is_dir():
+        print(f"Loading dataset from local path: {local_path}")
+        ds = load_from_disk(local_path)
+    else:
+        print("Downloading dataset from HF Hub...")
+        ds = load_dataset(
+            dataset_name,
+            name=name,
+            split=split,
+            revision=revision,
+            data_dir=data_dir,
+            data_files=data_files,
+            download_mode=DownloadMode.REUSE_CACHE_IF_EXISTS,
+            cache_dir=cache_dir,
+            num_proc=num_proc,
+        )
+    return ds.select_columns("text")
 
 
 def _add_bos_token(tokenizer: AutoTokenizer):
@@ -148,7 +153,44 @@ def _add_bos_token(tokenizer: AutoTokenizer):
     return tokenizer
 
 
+def _preprocess_and_tokenize_dataset(
+    dataset: Dataset,
+    tokenizer: AutoTokenizer,
+    max_seq_length: Int,
+    split_long_sequences: Bool,
+    num_proc: Int,
+):
+    """
+    Tokenizes and preprocesses a dataset for sequence modeling tasks.
+
+    This function adds a beginning-of-sequence (BOS) token to the tokenizer and tokenizes
+    the dataset's text, with optional truncation and support for handling sequences that
+    exceed the specified `max_seq_length`. All sequences are padded to `max_seq_length`.
+    """
+    print("Tokenizing and preprocessing dataset...")
+    tokenizer = _add_bos_token(tokenizer)
+    dataset = dataset.map(
+        lambda x: tokenizer(
+            x["text"],
+            truncation=True,
+            max_length=max_seq_length,
+            padding="max_length",
+            return_overflowing_tokens=split_long_sequences,
+        ),
+        batched=True,
+        num_proc=num_proc,
+        remove_columns=dataset.column_names,
+    )
+    dataset = dataset.select_columns(["input_ids", "attention_mask"])
+    dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+    dataset = dataset.cast_column(
+        "attention_mask", Sequence(feature=Value(dtype="int8"))
+    )
+    return dataset
+
+
 def _tokenize(dataset: Dataset, tokenizer: AutoTokenizer, num_proc: Int) -> Dataset:
+    """Deprecated tokenize function that was used together with _process_sequences."""
     print("Tokenizing dataset...")
     tokenizer = _add_bos_token(tokenizer)
     dataset = dataset.map(
@@ -161,38 +203,14 @@ def _tokenize(dataset: Dataset, tokenizer: AutoTokenizer, num_proc: Int) -> Data
     return dataset
 
 
-def _tokenize_truncate(
-    dataset: Dataset,
-    tokenizer: AutoTokenizer,
-    max_seq_length: Int,
-    num_proc: Int,
-) -> Dataset:
-    print("Tokenizing & preprocessing dataset...")
-    tokenizer = _add_bos_token(tokenizer)
-    dataset = dataset.map(
-        lambda x: tokenizer(
-            x["text"],
-            truncation=True,
-            max_length=max_seq_length,
-            padding="max_length",
-        ),
-        batched=True,
-        remove_columns=["text"],
-        num_proc=num_proc,
-    )
-    dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
-    dataset = dataset.cast_column(
-        "attention_mask", Sequence(feature=Value(dtype="int8"))
-    )
-    return dataset
-
-
 def _process_sequences(
     dataset: Dataset,
     min_seq_length: Int,
     max_seq_length: Int,
     padding_token: Int,
 ) -> Dataset:
+    """Deprecated function that was used to split and pad sequences. Now handleded
+    by the 'return_overflowing_tokens' argument in the tokenizer."""
     print("Preprocessing sequences...")
     dataset = dataset.filter(lambda x: len(x["input_ids"]) >= min_seq_length)
 
