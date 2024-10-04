@@ -48,7 +48,7 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 42,
+    "batch_size": 16,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
     "num_epochs": 10,

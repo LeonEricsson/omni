@@ -27,12 +27,12 @@ class GQA(nn.Module):
 
     Args:
     config: Configuration containing:
-        - num_heads: Number of query attention heads
-        - num_kv_heads: Number of key/value attention heads (must divide num_heads)
-        - d_model: Model dimension
-        - attention_bias: Whether to use bias in linear projections
-        - attention_dropout: Dropout probability for attention and residual connections
-        - pos_encoding_type: Type of positional encoding
+        - num_heads (int): Number of query attention heads
+        - num_kv_heads (int): Number of key/value attention heads (must divide num_heads)
+        - d_model (int): Model dimension
+        - attention_bias (bool): Whether to use bias in linear projections
+        - attention_dropout (float): Dropout probability for attention and residual connections
+        - pos_encoding_type (PositionEmbeddingScheme): Type of positional encoding
     """
 
     def __init__(self, config):
@@ -43,6 +43,8 @@ class GQA(nn.Module):
         self.kv_groups = self.num_heads // self.num_kv_heads
         self.head_dim = config.d_model // config.num_heads
         self.scale = self.head_dim**-0.5
+
+        self.kv_cache = None
 
         self.W_Q = nn.Linear(
             config.d_model,
@@ -78,7 +80,12 @@ class GQA(nn.Module):
     ):
         batch_size, seq_length, d_model = x.size()
 
+
+
         q = self.W_Q(x)
+
+        if self.kv_cache is not None:
+            x = x[:, -1] # only use the last token
         kv = self.W_KV(x)
 
         k, v = kv.chunk(2, dim=-1)
@@ -94,6 +101,13 @@ class GQA(nn.Module):
         k = torch.repeat_interleave(k, self.kv_groups, dim=1)
         v = torch.repeat_interleave(v, self.kv_groups, dim=1)
 
+        if self.kv_cache is None:
+            self.kv_cache = (k, v)
+        else:
+            cached_k, cached_v = self.kv_cache
+            k = torch.cat([cached_k, k], dim=1)
+            v = torch.cat([cached_v, v], dim=1)
+
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
@@ -106,6 +120,7 @@ class GQA(nn.Module):
                 attn_mask=None,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=True,
+                scale=self.scale,
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
@@ -188,6 +203,7 @@ class MHA(nn.Module):
                 attn_mask=None,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=True,
+                scale=self.scale,
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)

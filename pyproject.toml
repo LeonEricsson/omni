@@ -27,8 +27,10 @@ torchvision = [
   { index = "pytorch-cu121", marker = "platform_system != 'Darwin'"},
 ]
 
-
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
 explicit = true
+
+[tool.setuptools.packages.find]
+include = ["omni*"]
