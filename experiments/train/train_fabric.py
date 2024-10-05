@@ -6,7 +6,6 @@ A training example for a 20M parameter Llama style transformer on the TinyStorie
 import json
 import os
 import time
-from pathlib import Path
 from typing import Any, Dict
 
 import lightning as L
@@ -32,8 +31,8 @@ llama_config = LlamaConfig(
     seq_len=512,
     d_model=256,
     num_heads=8,
-    num_kv_heads=4,
-    num_layers=6,
+    num_kv_heads=8,
+    num_layers=4,
     rope_theta=0.1,
     norm_eps=1e-6,
     activation_fn="silu",
@@ -48,7 +47,9 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    "batch_size": 1,
+    "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
+    # "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
+    "batch_size": 38,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
     "num_epochs": 10,
@@ -56,7 +57,7 @@ training_config = {
     "warmup_steps": 1000,
     "tot_steps": 1e6,
     "gradient_clip_norm": 1.0,
-    "gradient_acc_steps": 2,
+    "gradient_acc_steps": 4,
     "seed": 42,
     "num_workers": 4,
     "device": "",  # auto-detect
@@ -64,10 +65,6 @@ training_config = {
     "strategy": "auto",
     "precision": "16-mixed",
 }
-
-dataset_dir = Path(
-    "data/pretokenized_roneneldan_TinyStories"
-)  # pretokenized - run preprocess.py first
 
 
 def setup_wandb(config: Dict[str, Any]) -> None:
@@ -226,7 +223,7 @@ def train(
                     model.train()
 
                 train_metrics = {
-                    "train/loss": loss.item(),
+                    "train/loss": (loss * gradient_acc_steps).item(),
                     "Tokens": total_tokens,
                 }
                 logger.log_training_step(train_metrics, total_steps)
@@ -270,12 +267,12 @@ def main():
     setup_wandb({**llama_config.__dict__, **training_config})
 
     ### DATA ###
-    data_metadata = extract_metadata(str(dataset_dir))
+    data_metadata = extract_metadata(training_config["dataset_dir"])
     max_seq_length = data_metadata["preprocessing_params"]["max_seq_length"]
     pad_token_id = data_metadata["pad_token_id"]
     assert max_seq_length >= llama_config.seq_len
 
-    dataset = load_from_disk(str(dataset_dir))
+    dataset = load_from_disk(str(training_config["dataset_dir"]))
     train_size = int(0.99 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
@@ -313,12 +310,12 @@ def main():
         min_lr=training_config["min_lr"],
     )
 
-    validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
-
     model, optimizer = fabric.setup(model, optimizer)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(
         train_dataloader, val_dataloader
     )
+
+    validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
     train(
         fabric=fabric,

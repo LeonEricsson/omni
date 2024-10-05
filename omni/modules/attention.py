@@ -23,16 +23,16 @@ class GQA(nn.Module):
     Grouped Query Attention (GQA) module that reduces key/value heads while maintaining query heads.
     GQA generalizes Multi-Head Attention by allowing fewer key/value heads than query heads,
     where each key/value head is shared across multiple query heads. GQA is equivalent to
-    MHA when num_kv_heads == num_heads.
+    MHA when num_kv_heads == num_heads. GQA is equivalent to MQA when num_kv_heads == 1.
 
     Args:
     config: Configuration containing:
-        - num_heads (int): Number of query attention heads
-        - num_kv_heads (int): Number of key/value attention heads (must divide num_heads)
-        - d_model (int): Model dimension
-        - attention_bias (bool): Whether to use bias in linear projections
-        - attention_dropout (float): Dropout probability for attention and residual connections
-        - pos_encoding_type (PositionEmbeddingScheme): Type of positional encoding
+        - num_heads: Number of query attention heads
+        - num_kv_heads: Number of key/value attention heads (must divide num_heads)
+        - d_model: Model dimension
+        - attention_bias: Whether to use bias in linear projections
+        - attention_dropout: Dropout probability for attention and residual connections
+        - pos_encoding_type: Type of positional encoding
     """
 
     def __init__(self, config):
@@ -43,8 +43,6 @@ class GQA(nn.Module):
         self.kv_groups = self.num_heads // self.num_kv_heads
         self.head_dim = config.d_model // config.num_heads
         self.scale = self.head_dim**-0.5
-
-        self.kv_cache = None
 
         self.W_Q = nn.Linear(
             config.d_model,
@@ -76,16 +74,12 @@ class GQA(nn.Module):
         self,
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
+        kv_cache,
         pos_info: Optional[Tensor],
     ):
         batch_size, seq_length, d_model = x.size()
 
-
-
         q = self.W_Q(x)
-
-        if self.kv_cache is not None:
-            x = x[:, -1] # only use the last token
         kv = self.W_KV(x)
 
         k, v = kv.chunk(2, dim=-1)
@@ -101,12 +95,13 @@ class GQA(nn.Module):
         k = torch.repeat_interleave(k, self.kv_groups, dim=1)
         v = torch.repeat_interleave(v, self.kv_groups, dim=1)
 
-        if self.kv_cache is None:
-            self.kv_cache = (k, v)
-        else:
+        if kv_cache is not None:
             cached_k, cached_v = self.kv_cache
-            k = torch.cat([cached_k, k], dim=1)
-            v = torch.cat([cached_v, v], dim=1)
+            k = torch.cat([cached_k, k], dim=2)
+            v = torch.cat([cached_v, v], dim=2)
+            k = k[:, :, -seq_length:]
+            v = v[:, :, -seq_length:]
+            self.kv_cache = (k, v)
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
@@ -120,7 +115,6 @@ class GQA(nn.Module):
                 attn_mask=None,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=True,
-                scale=self.scale,
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
@@ -203,7 +197,6 @@ class MHA(nn.Module):
                 attn_mask=None,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=True,
-                scale=self.scale,
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)

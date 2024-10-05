@@ -105,7 +105,7 @@ class MLA(nn.Module):
             torch.nn.functional, "scaled_dot_product_attention"
         )
 
-        assert config.pos_encoding_type is "rope"
+        assert config.pos_encoding_type == "rope"
 
     def forward(
         self,

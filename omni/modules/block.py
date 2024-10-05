@@ -1,6 +1,5 @@
 import torch.nn as nn
-from jaxtyping import Complex
-from jaxtyping import Float
+from jaxtyping import Complex, Float
 from torch import Tensor
 
 from omni.modules.attention import ATTN_MAP
@@ -24,6 +23,7 @@ class Block(nn.Module):
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info,
     ):
+        """Pre-norm Transformer block."""
 
         # Self-attention block
         attn_out = self.attn(self.norm1(x), mask, pos_info)

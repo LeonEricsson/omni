@@ -62,9 +62,8 @@ class TrainingLogger:
             f"[green]Epoch {epoch + 1}/{self.num_epochs}", total=self.train_batches
         )
 
-    def end_epoch(self, epoch: int, total_tokens: int) -> None:
+    def end_epoch(self, epoch: int) -> None:
         self.console.rule(f"[bold green]Epoch {epoch + 1} Complete")
-        self.console.print(f"Total tokens processed: {total_tokens:,}")
 
     def log_training_step(self, metrics: Dict[str, float], step: int) -> None:
         wandb.log(metrics, step=step)
