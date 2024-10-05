@@ -1,22 +1,34 @@
+"""
+Refactored logger for training and validation. The `TrainingLogger` class is a context
+manager that handles logging for both training and validation. It uses the `rich`
+library to display progress bars and other information in the console. The `wandb`
+library is used to log training, validation and system performance metrics.
+"""
+
 from typing import Dict
 
-import wandb
 from rich.console import Console
-from rich.progress import BarColumn
-from rich.progress import MofNCompleteColumn
-from rich.progress import Progress
-from rich.progress import SpinnerColumn
-from rich.progress import TaskProgressColumn
-from rich.progress import TextColumn
-from rich.progress import TimeElapsedColumn       
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
+import wandb
+
 
 class TrainingLogger:
     """Handles logging for both training and validation."""
+
     def __init__(self, num_epochs: int, train_batches: int):
         self.num_epochs = num_epochs
         self.train_batches = train_batches
         self.console = Console()
-        
+
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -27,11 +39,11 @@ class TrainingLogger:
         )
         self.epoch_task = None
         self.val_task = None
-        
+
     def __enter__(self):
         self.progress.start()
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.progress.stop()
 
@@ -42,34 +54,32 @@ class TrainingLogger:
     def end_training(self):
         self.console.print("[green]Training complete")
 
-    def start_epoch(self, epoch: int, total_tokens: int) -> None:
+    def start_epoch(self, epoch: int, step: int) -> None:
         self.console.rule(f"[bold cyan]Epoch {epoch + 1}/{self.num_epochs}")
-        wandb.log({"epoch": epoch + 1}, step=total_tokens)
-        
+        wandb.log({"Epoch": epoch + 1}, step=step)
+
         self.epoch_task = self.progress.add_task(
-            f"[green]Epoch {epoch + 1}/{self.num_epochs}",
-            total=self.train_batches
+            f"[green]Epoch {epoch + 1}/{self.num_epochs}", total=self.train_batches
         )
 
     def end_epoch(self, epoch: int, total_tokens: int) -> None:
         self.console.rule(f"[bold green]Epoch {epoch + 1} Complete")
         self.console.print(f"Total tokens processed: {total_tokens:,}")
-        
-    def log_training_step(self, metrics: Dict[str, float], total_tokens: int) -> None:
-        wandb.log(metrics, step=total_tokens)
-        
+
+    def log_training_step(self, metrics: Dict[str, float], step: int) -> None:
+        wandb.log(metrics, step=step)
+
     def advance_train(self) -> None:
         self.progress.advance(self.epoch_task)
-        
+
     def start_validation(self, num_batches: int) -> None:
         self.val_task = self.progress.add_task(
-            "[yellow]Validating...",
-            total=num_batches
+            "[yellow]Validating...", total=num_batches
         )
-        
+
     def advance_validation(self) -> None:
         self.progress.advance(self.val_task)
-        
-    def end_validation(self, metrics: Dict[str, float], total_tokens: int) -> None:
-        wandb.log(metrics, step=total_tokens)
+
+    def log_validation_step(self, metrics: Dict[str, float], step: int) -> None:
+        wandb.log(metrics, step=step)
         self.progress.remove_task(self.val_task)

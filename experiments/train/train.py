@@ -6,7 +6,6 @@ import json
 import os
 import time
 from pathlib import Path
-from random import sample
 from typing import Any, Dict
 
 import torch
@@ -14,14 +13,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
 from jaxtyping import Float, Int
-from torch.utils.data import DataLoader, Subset
+from logger import TrainingLogger
+from torch.utils.data import DataLoader
 
 import wandb
-from logger import TrainingLogger
 from omni.architectures.llama import LlamaConfig
 from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
-from omni.utils.tools import auto_device
+from omni.utils.setup import parse_args, validate_model_initialization
+from omni.utils.system import auto_device
 
 model_config = LlamaConfig(
     vocab_size=50258,
@@ -61,10 +61,6 @@ training_config = {
 dataset_dir = Path(
     "data/pretokenized_roneneldan_TinyStories"
 )  # pretokenized - run preprocess.py first
-
-
-device = auto_device(training_config["device"])
-amp_available = torch.amp.autocast_mode.is_autocast_available(device.type)
 
 
 def setup_wandb(config: Dict[str, Any]) -> None:
@@ -137,6 +133,7 @@ def train(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     model: nn.Module,
+    device: torch.device,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
     num_epochs: Int,
@@ -144,6 +141,7 @@ def train(
     gradient_acc_steps: Int = 1,
     eval_every: Int = 100,
     ignore_index: Int = -1,
+    amp_available: bool = False,
 ):
     """
     Trains the model for 'num_epochs'.
@@ -239,32 +237,6 @@ def cross_entropy_loss(logits, target_ids, ignore_index, reduction):
     )
 
 
-def sanity_check(dataset, model, ignore_index):
-    subset_indices = sample(range(len(dataset)), 64)
-    subset = Subset(dataset, subset_indices)
-    dataloader = DataLoader(subset, batch_size=64, shuffle=True)
-
-    batch = next(iter(dataloader))
-    input_ids = batch["input_ids"][:, :-1].to(device)
-    target_ids = batch["input_ids"][:, 1:].to(device)
-    attention_mask = batch["attention_mask"][:, :-1].to(device)
-
-    with torch.autocast(device.type, enabled=amp_available):
-        logits = model(input_ids, attention_mask)
-        batch_size, seq_len, vocab_size = logits.size()
-
-        logits = logits.reshape(batch_size * seq_len, vocab_size)
-        target_ids = target_ids.reshape(batch_size * seq_len)
-
-        loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
-
-    expected_loss = torch.log(torch.tensor(vocab_size))
-    assert torch.isclose(loss, expected_loss, atol=0.25), (
-        f"Model is not initialized correctly. "
-        f"Expected loss to be close to {expected_loss} but got {loss}"
-    )
-
-
 def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
     metadata_path = os.path.join(dataset_dir, "preprocessing_metadata.json")
     with open(metadata_path, "r") as f:
@@ -272,6 +244,12 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
 
 
 def main():
+    cli_args = parse_args(training_config)
+    training_config.update(cli_args)
+
+    device = auto_device(training_config["device"])
+    amp_available = torch.amp.autocast_mode.is_autocast_available(device.type)
+
     torch.manual_seed(training_config["seed"])
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(training_config["seed"])
@@ -306,7 +284,7 @@ def main():
     val_dataloader = init_dataloader(val_dataset)
 
     model = Transformer(model_config).to(device)
-    if torch.cuda.is_available():
+    if device.type == "cuda":
         model = torch.compile(model)
 
     optimizer = torch.optim.AdamW(
@@ -323,18 +301,20 @@ def main():
         min_lr=training_config["min_lr"],
     )
 
-    sanity_check(dataset, model, ignore_index=pad_token_id)
+    validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
     train(
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         model=model,
+        device=device,
         optimizer=optimizer,
         scheduler=scheduler,
         gradient_clip_norm=training_config["gradient_clip_norm"],
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
+        amp_available=amp_available,
     )
     wandb.finish()
 

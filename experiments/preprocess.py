@@ -1,6 +1,3 @@
-from omni.preprocessing.preprocess import prepare_dataset
-from omni.preprocessing.tokenizer import AutoTokenizer
-
 """
 Datasets from HF need to be preprocessed before they can be used for training. The
 `prepare_dataset` function is a wrapper around the preprocessing pipeline that
@@ -8,6 +5,9 @@ downloads, tokenizes, and splits sequences from a dataset. The function also
 handles sequence length constraints and optionally pushes the processed dataset
 to the HuggingFace Hub.
 """
+
+from omni.preprocessing.preprocess import prepare_dataset
+from omni.preprocessing.tokenizer import AutoTokenizer
 
 
 def prepare_tinystories():
@@ -24,7 +24,6 @@ def prepare_tinystories():
         split="train",
         push=False,
         hf_username="LeonEricsson",
-        output_dir="test_data",
     )
 
 

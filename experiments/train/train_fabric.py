@@ -1,36 +1,36 @@
 """
-A training example for a 20M parameter Llama style transformer on the TinyStories dataset - using Pytorch Lightning Fabric.
+A training example for a 20M parameter Llama style transformer on the TinyStories dataset
+- using PyTorch Lightning Fabric.
 """
 
 import json
 import os
 import time
 from pathlib import Path
-from random import sample
-from typing import Any
-from typing import Dict
+from typing import Any, Dict
 
 import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
+from jaxtyping import Float, Int
+from logger import TrainingLogger
 from torch.utils.data import DataLoader
-from torch.utils.data import Subset
 
 import wandb
-from logger import TrainingLogger
-from omni.architectures.llama import Llama
 from omni.architectures.llama import LlamaConfig
+from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
-from omni.utils.tools import auto_device
+from omni.utils.setup import parse_args, validate_model_initialization
+from omni.utils.system import auto_device
 
+torch.set_float32_matmul_precision(precision="high")
 
-model_config = LlamaConfig(
-    vocab_size=50257,
+llama_config = LlamaConfig(
+    vocab_size=50258,
     seq_len=512,
     d_model=256,
-    hidden_dim=512,
     num_heads=8,
     num_kv_heads=4,
     num_layers=6,
@@ -50,21 +50,24 @@ model_config = LlamaConfig(
 training_config = {
     "batch_size": 1,
     "learning_rate": 5e-4,
-    "min_lr": 1e-7,
+    "min_lr": 5e-5,
     "num_epochs": 10,
-    "eval_every": 500,
+    "eval_every": 1000,
     "warmup_steps": 1000,
-    "tot_steps": 50000,
+    "tot_steps": 1e6,
     "gradient_clip_norm": 1.0,
+    "gradient_acc_steps": 2,
     "seed": 42,
+    "num_workers": 4,
+    "device": "",  # auto-detect
+    "num_devices": 1,
+    "strategy": "auto",
+    "precision": "16-mixed",
 }
 
 dataset_dir = Path(
     "data/pretokenized_roneneldan_TinyStories"
 )  # pretokenized - run preprocess.py first
-
-
-device = auto_device("cpu")
 
 
 def setup_wandb(config: Dict[str, Any]) -> None:
@@ -73,15 +76,15 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         config=config,
         notes="LLaMA architecture training on TinyStories",
         tags=["llama", "tinystories", "pre-training"],
-        mode="disabled",
+        mode="online",
     )
 
 
 def validate(
-    test_dataloader: DataLoader,
+    val_dataloader: DataLoader,
     model: nn.Module,
     logger: TrainingLogger,
-    ignore_index: int = -1,
+    ignore_index: Int = -1,
 ) -> Dict[str, float]:
     """
     Validate the model, logging loss and perplexity.
@@ -100,23 +103,16 @@ def validate(
     total_loss = 0
     val_tokens = 0
 
-    logger.start_validation(len(test_dataloader))
+    logger.start_validation(len(val_dataloader))
 
     with torch.no_grad():
-        for batch in test_dataloader:
+        for batch in val_dataloader:
             input_ids = batch["input_ids"][:, :-1]
             target_ids = batch["input_ids"][:, 1:]
             attention_mask = batch["attention_mask"][:, :-1]
 
             logits = model(input_ids, attention_mask)
-            batch_size, seq_len, vocab_size = logits.size()
-
-            logits = logits.reshape(batch_size * seq_len, vocab_size)
-            target_ids = target_ids.reshape(batch_size * seq_len)
-
-            loss = F.cross_entropy(
-                logits, target_ids, ignore_index=ignore_index, reduction="sum"
-            )
+            loss = cross_entropy_loss(logits, target_ids, ignore_index, reduction="sum")
 
             total_loss += loss.item()
             val_tokens += attention_mask.sum().item()
@@ -142,10 +138,11 @@ def train(
     model: L.LightningModule,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler,
-    num_epochs: int,
-    gradient_clip_norm: float,
-    eval_every: int = 500,
-    ignore_index: int = -1,
+    num_epochs: Int,
+    gradient_clip_norm: Float,
+    gradient_acc_steps: Int = 1,
+    eval_every: Int = 500,
+    ignore_index: Int = -1,
 ) -> None:
     """
     Trains the model for 'num_epochs'.
@@ -165,90 +162,87 @@ def train(
     model.train()
     total_steps = 0
     total_tokens = 0
-
     start_time = time.perf_counter()
 
-    with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
-        logger.start_training(device)
-        for epoch in range(num_epochs):
-            logger.start_epoch(epoch, total_tokens)
+    optimizer.zero_grad()
 
-            for batch in train_dataloader:
-                optimizer.zero_grad()
+    with TrainingLogger(num_epochs, len(train_dataloader)) as logger:
+        logger.start_training(fabric.device)
+        for epoch in range(num_epochs):
+            logger.start_epoch(epoch, total_steps)
+
+            for step, batch in enumerate(train_dataloader, start=1):
                 input_ids = batch["input_ids"][:, :-1]
                 target_ids = batch["input_ids"][:, 1:]
                 attention_mask = batch["attention_mask"][:, :-1]
 
-                logits = model(input_ids, attention_mask)
-
-                batch, seq, vocab_size = logits.size()
-                logits = logits.reshape(batch * seq, vocab_size)
-                target_ids = target_ids.reshape(batch * seq)
-                loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
-                fabric.backward(loss)
-
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=gradient_clip_norm
+                is_accumulating = step % gradient_acc_steps != 0 and step != len(
+                    train_dataloader
                 )
 
-                optimizer.step()
-                scheduler.step()
+                # skip .backward() synchronization during gradient accumulation
+                with fabric.no_backward_sync(model, enabled=is_accumulating):
+                    logits = model(input_ids, attention_mask)
+
+                    loss = (
+                        cross_entropy_loss(
+                            logits, target_ids, ignore_index, reduction="mean"
+                        )
+                        / gradient_acc_steps
+                    )
+                    fabric.backward(loss)
+
+                # gradient accumulation
+                if not is_accumulating:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=gradient_clip_norm
+                    )
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
 
                 total_steps += 1
                 batch_tokens = attention_mask.sum().item()
                 total_tokens += batch_tokens
 
+                # eval and log
                 if total_steps % eval_every == 0:
                     elapsed_time = time.perf_counter() - start_time
                     tokens_per_second = total_tokens / elapsed_time
                     train_metrics = {
-                        "train/loss": loss.item(),
                         "train/learning_rate": scheduler.get_last_lr()[0],
                         "utils/tokens_per_second": tokens_per_second,
-                        "Tokens": total_tokens,
                     }
                     logger.log_training_step(train_metrics, total_steps)
 
-                    # Run validation
                     model.eval()
                     validation_metrics = validate(
                         val_dataloader,
                         model,
-                        device,
                         logger,
                         ignore_index,
                     )
                     logger.log_validation_step(validation_metrics, total_steps)
                     model.train()
 
+                train_metrics = {
+                    "train/loss": loss.item(),
+                    "Tokens": total_tokens,
+                }
+                logger.log_training_step(train_metrics, total_steps)
+
                 logger.advance_train()
 
-            logger.end_epoch(epoch, total_tokens)
+            logger.end_epoch(epoch, total_steps)
         logger.end_training()
 
 
-def sanity_check(dataset, model, ignore_index):
-    subset_indices = sample(range(len(dataset)), 64)
-    subset = Subset(dataset, subset_indices)
-    dataloader = DataLoader(subset, batch_size=64, shuffle=True)
-
-    batch = next(iter(dataloader))
-    input_ids = batch["input_ids"][:, :-1].to(device)
-    target_ids = batch["input_ids"][:, 1:].to(device)
-    attention_mask = batch["attention_mask"][:, :-1].to(device)
-
-    logits = model(input_ids, attention_mask)
+def cross_entropy_loss(logits, target_ids, ignore_index, reduction):
     batch_size, seq_len, vocab_size = logits.size()
-
     logits = logits.reshape(batch_size * seq_len, vocab_size)
     target_ids = target_ids.reshape(batch_size * seq_len)
-
-    loss = F.cross_entropy(logits, target_ids, ignore_index=ignore_index)
-
-    expected_loss = torch.log(torch.tensor(vocab_size))
-    assert torch.isclose(loss, expected_loss, atol=0.25), (
-        f"Model is not initialized correctly. "
-        f"Expected loss to be close to {expected_loss} but got {loss}"
+    return F.cross_entropy(
+        logits, target_ids, ignore_index=ignore_index, reduction=reduction
     )
 
 
@@ -259,47 +253,52 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
 
 
 def main():
-    fabric = L.Fabric(accelerator=device, devices=1)
+    cli_args = parse_args(training_config)
+    training_config.update(cli_args)
+
+    device = auto_device(training_config["device"])
+
+    fabric = L.Fabric(
+        accelerator=device.type,
+        devices=training_config["num_devices"],
+        precision=training_config["precision"],
+        strategy=training_config["strategy"],
+    )
     fabric.launch()
+    fabric.seed_everything(training_config["seed"])
 
-    torch.manual_seed(training_config["seed"])
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(training_config["seed"])
+    setup_wandb({**llama_config.__dict__, **training_config})
 
-    setup_wandb({**model_config.__dict__, **training_config})
-
-    # load data
+    ### DATA ###
     data_metadata = extract_metadata(str(dataset_dir))
     max_seq_length = data_metadata["preprocessing_params"]["max_seq_length"]
     pad_token_id = data_metadata["pad_token_id"]
-    assert max_seq_length >= model_config.seq_len
+    assert max_seq_length >= llama_config.seq_len
 
-    # create dataloaders
     dataset = load_from_disk(str(dataset_dir))
-    train_size = int(0.95 * len(dataset))
+    train_size = int(0.99 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_size, val_size]
     )
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-    )
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-    )
+    def init_dataloader(dataset):
+        return DataLoader(
+            dataset,
+            batch_size=training_config["batch_size"],
+            shuffle=True,
+            num_workers=training_config["num_workers"],
+            pin_memory=True,
+            drop_last=True,  # avoid torch model recompilation
+        )
 
-    model = Llama(model_config)
-    if torch.cuda.is_available():
-        model = torch.compile(model)
+    train_dataloader = init_dataloader(train_dataset)
+    val_dataloader = init_dataloader(val_dataset)
+
+    ### MODEL ###
+    model = Transformer(llama_config)
+    if device.type == "cuda":
+        model = torch.compile(model, fullgraph=True)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -314,12 +313,12 @@ def main():
         min_lr=training_config["min_lr"],
     )
 
+    validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
+
     model, optimizer = fabric.setup(model, optimizer)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(
         train_dataloader, val_dataloader
     )
-
-    sanity_check(dataset, model, ignore_index=pad_token_id)
 
     train(
         fabric=fabric,
@@ -329,6 +328,7 @@ def main():
         optimizer=optimizer,
         scheduler=scheduler,
         gradient_clip_norm=training_config["gradient_clip_norm"],
+        gradient_acc_steps=training_config["gradient_acc_steps"],
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
