@@ -34,7 +34,17 @@ class Inference:
             logits = torch.zeros_like(logits).scatter_(-1, top_k_indices, top_k_values)
 
         if self.top_p < 1.0:
-            pass
+            sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
+            cumulative_probs = torch.cumsum(
+                nn.functional.softmax(sorted_logits, dim=-1), dim=-1
+            )
+            sorted_indices_to_remove = cumulative_probs > self.top_p
+            # sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[
+            #     ..., :-1
+            # ].clone()
+            # sorted_indices_to_remove[..., 0] = 0
+            sorted_indices_to_remove[..., 0] = False
+            torch.full_like()
 
     @torch.no_grad()
     def generate(self, prompt: str):
