@@ -166,3 +166,4 @@ cython_debug/
 hf_cache/
 data/
 wandb/
+checkpoints/
