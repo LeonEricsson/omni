@@ -73,3 +73,14 @@ def parse_args(config):
 
     args = parser.parse_args()
     return vars(args)
+
+
+def create_checkpoint_folder(base_name: str) -> str:
+    """Create a unique folder for saving checkpoints based on a base name and timestamp."""
+    import os
+    import time
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    checkpoint_dir = os.path.join("checkpoints", f"{base_name}_{timestamp}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    return checkpoint_dir

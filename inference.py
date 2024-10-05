@@ -61,7 +61,7 @@ class Inference:
 
     @torch.no_grad()
     def generate(self, prompt: str):
-        input_ids = self.tokenizer(prompt, return_tensor="pt").to(self.device)
+        input_ids = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
         generated = input_ids
         token_count = 0
@@ -78,3 +78,48 @@ class Inference:
 
             generated = torch.cat((generated, next_token), dim=-1)
             token_count += 1
+
+
+if __name__ == "__main__":
+    import lightning as L
+    import torch
+
+    from omni.architectures.llama import LlamaConfig
+    from omni.modules.transformer import Transformer
+    from omni.preprocessing.tokenizer import AutoTokenizer
+
+    tokenizer = AutoTokenizer.create("EleutherAI/gpt-neo-125m")
+    tokenizer.add_special_tokens({"pad_token": "<pad>"})
+
+    llama_config = LlamaConfig(
+        vocab_size=50258,
+        seq_len=512,
+        d_model=256,
+        num_heads=8,
+        num_kv_heads=8,
+        num_layers=4,
+        rope_theta=0.1,
+        norm_eps=1e-6,
+        activation_fn="silu",
+        mlp_bias=False,
+        mlp_dropout=0.0,
+        attention_bias=False,
+        attention_dropout=0.0,
+        pos_encoding_type="rope",
+        mlp="mlp_swiglu",
+        normalization="rmsnorm",
+        attention="gqa",
+    )
+
+    model = Transformer(llama_config)
+
+    checkpoint = torch.load("checkpoints/llama-30M_20250120_144801/state.ckpt")
+    model.load_state_dict(checkpoint["model"])
+
+    inference = Inference(model, tokenizer, device="cuda", temperature=0)
+
+    prompt = "Once upon a time"
+
+    # Generate text
+    for token in inference.generate(prompt):
+        print(tokenizer.decode(token))

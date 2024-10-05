@@ -21,7 +21,11 @@ import wandb
 from omni.architectures.llama import LlamaConfig
 from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
-from omni.utils.setup import parse_args, validate_model_initialization
+from omni.utils.setup import (
+    create_checkpoint_folder,
+    parse_args,
+    validate_model_initialization,
+)
 from omni.utils.system import auto_device
 
 torch.set_float32_matmul_precision(precision="high")
@@ -47,13 +51,13 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
-    # "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
+    # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
+    "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
     "batch_size": 38,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
-    "num_epochs": 10,
-    "eval_every": 1000,
+    "num_epochs": 2,
+    "eval_every": 2000,
     "warmup_steps": 1000,
     "tot_steps": 1e6,
     "gradient_clip_norm": 1.0,
@@ -230,8 +234,10 @@ def train(
 
                 logger.advance_train()
 
-            logger.end_epoch(epoch, total_steps)
+            logger.end_epoch(epoch)
         logger.end_training()
+
+    return model
 
 
 def cross_entropy_loss(logits, target_ids, ignore_index, reduction):
@@ -264,6 +270,7 @@ def main():
     fabric.launch()
     fabric.seed_everything(training_config["seed"])
 
+    checkpoint_dir = create_checkpoint_folder("llama-30M")
     setup_wandb({**llama_config.__dict__, **training_config})
 
     ### DATA ###
@@ -317,7 +324,7 @@ def main():
 
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
-    train(
+    model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
@@ -330,6 +337,12 @@ def main():
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
     )
+
+    # save model
+    checkpoint_path = os.path.join(checkpoint_dir, "state.ckpt")
+    state = {"model": model}
+    fabric.save(checkpoint_path, state)
+
     wandb.finish()
 
 
