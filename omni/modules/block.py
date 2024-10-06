@@ -23,7 +23,7 @@ class Block(nn.Module):
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info,
-        kv_cache: Optional[KVCache],
+        kv_cache,
         layer_idx: int = None,
     ):
         """Pre-norm Transformer block."""

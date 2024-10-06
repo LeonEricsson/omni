@@ -32,6 +32,9 @@ class Inference:
         self.model.eval()
 
     def _sample(self, logits):
+        if self.temperature == 0.0:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        
         logits = logits / self.temperature
 
         top_k_values, top_k_indices = torch.topk(logits, self.top_k, dim=-1)
@@ -44,7 +47,7 @@ class Inference:
                 nn.functional.softmax(sorted_logits, dim=-1), dim=-1
             )
             cutoff_idx = torch.searchsorted(cumulative_probs, self.top_p, right=True)
-            cutoff_idx = torch.minimum(cutoff_idx + 1, self.top_k)
+            cutoff_idx = torch.minimum(cutoff_idx + 1, torch.tensor(self.top_k))
             sorted_logits[..., cutoff_idx:] = float("-inf")
             top_k_values.scatter_(-1, sorted_indices, sorted_logits)
 
@@ -52,7 +55,7 @@ class Inference:
             probs = nn.functional.softmax(top_k_values, dim=-1)
             highest_prob = torch.max(probs, dim=-1, keepdim=True).values
             min_p = self.min_p * highest_prob
-            logits = torch.where(probs < min_p, float("-inf"), logits)
+            top_k_values = torch.where(probs < min_p, float("-inf"), top_k_values)
 
         probs = nn.functional.softmax(top_k_values, dim=-1)
         sample_idx = torch.multinomial(probs, num_samples=1)
@@ -61,22 +64,22 @@ class Inference:
 
     @torch.no_grad()
     def generate(self, prompt: str):
-        input_ids = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
         generated = input_ids
         token_count = 0
 
         while token_count < self.max_length:
             outputs = self.model(generated)
-            next_token_logits = outputs[:, -1, :]
+            next_token_logits = outputs[0, -1, :]
             next_token = self._sample(next_token_logits)
-
+            
             yield next_token.item()
 
             if next_token.item() == self.tokenizer.eos_token_id:
                 break
 
-            generated = torch.cat((generated, next_token), dim=-1)
+            generated = torch.cat((generated, next_token.unsqueeze(0)), dim=-1)
             token_count += 1
 
 
@@ -86,6 +89,7 @@ if __name__ == "__main__":
     from omni.architectures.llama import LlamaConfig
     from omni.modules.transformer import Transformer
     from omni.preprocessing.tokenizer import AutoTokenizer
+    from omni.utils.system import auto_device
 
     tokenizer = AutoTokenizer.create("EleutherAI/gpt-neo-125m")
     tokenizer.add_special_tokens({"pad_token": "<pad>"})
@@ -114,13 +118,16 @@ if __name__ == "__main__":
 
     ## create KV cache
 
-    checkpoint = torch.load("checkpoints/llama-30M_20250120_144801/state.ckpt")
+    checkpoint = torch.load("checkpoints/llama-30M_20250123_104138/init.ckpt", weights_only=True)
     model.load_state_dict(checkpoint["model"])
 
-    inference = Inference(model, tokenizer, device="cuda", temperature=0)
+    inference = Inference(model, tokenizer, device=auto_device(), temperature=0, max_length=20)
 
     prompt = "Once upon a time"
 
+    print(prompt, end="", flush=True)
+
     # Generate text
     for token in inference.generate(prompt):
-        print(tokenizer.decode(token))
+        print(tokenizer.decode([token]), end="", flush=True)
+

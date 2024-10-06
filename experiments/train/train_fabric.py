@@ -329,7 +329,7 @@ def main():
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-    exit()
+    
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,
