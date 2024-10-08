@@ -166,6 +166,8 @@ class MHA(nn.Module):
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
+        kv_cache,
+        layer_idx: Optional[int],
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -180,6 +182,9 @@ class MHA(nn.Module):
         q = q.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
+
+        if kv_cache is not None:
+            k, v = kv_cache.forward(layer_idx, k, v)
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
