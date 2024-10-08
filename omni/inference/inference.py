@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from omni.modules.transformer import KVCache
 
 class Inference:
     def __init__(
@@ -63,7 +64,29 @@ class Inference:
         return next_token
 
     @torch.no_grad()
-    def generate(self, prompt: str):
+    def generate(self, prompt: str, kv_cache: KVCache):
+        prompt_input = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+
+        # prefill stage
+        outputs = self.model(prompt_input, kv_cache=kv_cache)
+        next_token = self._sample(outputs[0, -1, :])
+        yield next_token.item()
+
+        token_count = 1
+        while token_count < self.max_length:
+            outputs = self.model(next_token.unsqueeze(0), kv_cache=kv_cache)
+            next_token = self._sample(outputs[0, -1, :])
+            
+            yield next_token.item()
+
+            if next_token.item() == self.tokenizer.eos_token_id:
+                break
+
+            token_count += 1
+
+
+    @torch.no_grad()
+    def generate_nonkvcache(self, prompt: str):
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
 
         generated = input_ids
@@ -81,53 +104,3 @@ class Inference:
 
             generated = torch.cat((generated, next_token.unsqueeze(0)), dim=-1)
             token_count += 1
-
-
-if __name__ == "__main__":
-    import torch
-
-    from omni.architectures.llama import LlamaConfig
-    from omni.modules.transformer import Transformer
-    from omni.preprocessing.tokenizer import AutoTokenizer
-    from omni.utils.system import auto_device
-
-    tokenizer = AutoTokenizer.create("EleutherAI/gpt-neo-125m")
-    tokenizer.add_special_tokens({"pad_token": "<pad>"})
-
-    llama_config = LlamaConfig(
-        vocab_size=50258,
-        seq_len=512,
-        d_model=256,
-        num_heads=8,
-        num_kv_heads=8,
-        num_layers=4,
-        rope_theta=0.1,
-        norm_eps=1e-6,
-        activation_fn="silu",
-        mlp_bias=False,
-        mlp_dropout=0.0,
-        attention_bias=False,
-        attention_dropout=0.0,
-        pos_encoding_type="rope",
-        mlp="mlp_swiglu",
-        normalization="rmsnorm",
-        attention="gqa",
-    )
-
-    model = Transformer(llama_config)
-
-    ## create KV cache
-
-    checkpoint = torch.load("checkpoints/llama-30M_20250123_104138/init.ckpt", weights_only=True)
-    model.load_state_dict(checkpoint["model"])
-
-    inference = Inference(model, tokenizer, device=auto_device(), temperature=0, max_length=20)
-
-    prompt = "Once upon a time"
-
-    print(prompt, end="", flush=True)
-
-    # Generate text
-    for token in inference.generate(prompt):
-        print(tokenizer.decode([token]), end="", flush=True)
-

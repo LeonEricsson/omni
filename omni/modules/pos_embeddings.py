@@ -72,7 +72,6 @@ def apply_rope_real(
     Returns:
         Rotated query and key tensors.
     """
-    batch, n_heads, seq_length, head_dim = q.size()
     q_f = q.float()
     k_f = k.float()
 
@@ -81,33 +80,29 @@ def apply_rope_real(
     k_real, k_imag = k_f[:, :, :, ::2], k_f[:, :, :, 1::2]
 
     cos_rotations, sin_rotations = rotations
-    cos_rotations = cos_rotations[None, None, :seq_length, :]
-    sin_rotations = sin_rotations[None, None, :seq_length, :]
 
-    # apply rotations: (real * cos - imag * sin) and (real * sin + imag * cos)
-    q_rotated_real = (
-        q_real * cos_rotations
-        - q_imag * sin_rotations
+    def apply_rotation(real, imag, cos_rot, sin_rot, len):
+        cos_rot = cos_rot[None, None, :len, :]
+        sin_rot = sin_rot[None, None, :len, :]
+        
+        rotated_real = real * cos_rot - imag * sin_rot
+        rotated_imag = real * sin_rot + imag * cos_rot
+        
+        return rotated_real, rotated_imag
+    
+    q_rotated_real, q_rotated_imag = apply_rotation(
+        q_real, q_imag, cos_rotations, sin_rotations, q.size(2)
     )
-    q_rotated_imag = (
-        q_real * sin_rotations
-        + q_imag * cos_rotations
-    )
-    k_rotated_real = (
-        k_real * cos_rotations
-        - k_imag * sin_rotations
-    )
-    k_rotated_imag = (
-        k_real * sin_rotations
-        + k_imag * cos_rotations
+    k_rotated_real, k_rotated_imag = apply_rotation(
+        k_real, k_imag, cos_rotations, sin_rotations, k.size(2)
     )
 
     # interleave real/imaginary parts and reshape to original shape
     rotated_q = torch.stack((q_rotated_real, q_rotated_imag), dim=4).view(
-        batch, n_heads, seq_length, head_dim
+        q.size()
     )
     rotated_k = torch.stack((k_rotated_real, k_rotated_imag), dim=4).view(
-        batch, n_heads, seq_length, head_dim
+        k.size()
     )
 
     return rotated_q.type_as(q), rotated_k.type_as(k)

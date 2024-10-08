@@ -1,6 +1,5 @@
 import torch.nn as nn
 from jaxtyping import Float
-from typing import Optional
 from torch import Tensor
 
 from omni.modules.attention import ATTN_MAP

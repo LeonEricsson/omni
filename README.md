@@ -14,8 +14,8 @@ my collection of paper implementations and experiments. built to be modular, eas
 ### todo
 
 - [ ] Train 20M small model on >1B tokens
-- [ ] Inference engine
-- [ ] KV Cache
+- [x] Inference engine
+- [x] KV Cache
 - MLA
   - [ ] Training run
   - [ ] Verify KV Cache reduction
