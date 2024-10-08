@@ -10,7 +10,8 @@ NormalizationType = Literal["rmsnorm", "layernorm", "none"]
 class RMSNorm(nn.Module):
     def __init__(
         self,
-        config,
+        config = None,
+        dim = None,
         eps: Float = 1e-5,
     ):
         """
@@ -20,6 +21,7 @@ class RMSNorm(nn.Module):
         Args:
         config (TransformerConfig): Configuration dataclass containing:
             - d_model (int): Input dimension to normalize over (Layer dimension)
+        dim (int, optional): Dimension to normalize over. Defaults to None.
         eps (float, optional): Small constant for numerical stability. Defaults to 1e-5.
 
         References:
@@ -27,8 +29,11 @@ class RMSNorm(nn.Module):
         """
         super().__init__()
 
+        assert config is not None or dim is not None
+        norm_dim = config.d_model if config is not None else dim
+
         self.eps = eps
-        self.gamma = nn.Parameter(torch.ones(config.d_model))
+        self.gamma = nn.Parameter(torch.ones(norm_dim))
 
     def _irms(self, x):
         return torch.rsqrt(torch.mean(torch.square(x), dim=-1, keepdim=True) + self.eps)
@@ -41,7 +46,8 @@ class RMSNorm(nn.Module):
 class LayerNorm(nn.Module):
     def __init__(
         self,
-        config,
+        config = None,
+        dim = None,
         eps: Float = 1e-5,
     ):
         """
@@ -57,9 +63,13 @@ class LayerNorm(nn.Module):
             - "Layer Normalization" (https://arxiv.org/abs/1607.06450)
         """
         super().__init__()
+
+        assert config is not None or dim is not None
+        norm_dim = config.d_model if config is not None else dim
+        
         self.eps = eps
-        self.gamma = nn.Parameter(torch.ones(config.d_model))
-        self.beta = nn.Parameter(torch.zeros(config.d_model))
+        self.gamma = nn.Parameter(torch.ones(norm_dim))
+        self.beta = nn.Parameter(torch.zeros(norm_dim))
 
     def _norm_scaling(self, x):
         mean = torch.mean(x, dim=-1, keepdim=True)

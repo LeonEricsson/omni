@@ -17,6 +17,7 @@ my collection of paper implementations and experiments. built to be modular, eas
 - [x] Inference engine
 - [x] KV Cache
 - MLA
+  - [x] KV Cache
   - [ ] Training run
   - [ ] Verify KV Cache reduction
 - [ ] Differential Transformer
