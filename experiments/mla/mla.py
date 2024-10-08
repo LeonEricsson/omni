@@ -209,8 +209,7 @@ class MLA(nn.Module):
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-            qk = qk + mask
-
+            qk = qk + mask[:, :, :seq_length, :seq_length]
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
 
@@ -235,23 +234,22 @@ class MLAInference(MLA):
          - "DeepSeek V3" (https://arxiv.org/abs/2412.19437)
     """
 
-    def __init__(self):
-        super().__init__()
-        self.fuse_weights()
+    def __init__(self, config):
+        super().__init__(config)
 
     def fuse_weights(self):
         """Lazily compute and store fused weights for inference."""
 
         # Fuse Q with K and V up-projections
-        W_UK = self.W_UK.weight.detach()
+        W_UK = self.W_UK.weight.detach() 
         W_UQ = self.W_UQ.weight.detach()
 
-        W_UQ_UK = W_UQ @ W_UK.transpose(0, 1) # (d_cq, d_ckv)
+        W_UQ_UK = W_UQ.T @ W_UK # (d_cq, d_ckv)
 
         W_UV = self.W_UV.weight.detach()
         W_O = self.W_O.weight.detach()
 
-        W_U_OV = W_UV @ W_O # (d_ckv, d_model)
+        W_U_OV = W_UV.T @ W_O.T # (d_ckv, d_model)
         
         self.register_buffer("W_UQ_UK", W_UQ_UK)
         self.register_buffer("W_U_OV", W_U_OV)
@@ -264,16 +262,19 @@ class MLAInference(MLA):
         kv_cache: KVCacheMLA,
         layer_idx: Optional[int],
     ):
+        #print(x.shape)
         batch_size, seq_length, _ = x.size()
+
+        if not hasattr(self, "W_UQ_UK") or not hasattr(self, "W_U_OV"):
+            self.fuse_weights()
 
         c_Q = self.q_norm(self.W_DQ(x))
 
         # Compressed "content" dimensions
         c_KV = self.W_DWK(x)
         c_KV = self.kv_norm(c_KV)  # (batch, seq, d_ckv)
-        # cache c_KV
 
-        q_C = self.W_UQ_UK(c_Q).unsqueeze(1) # (batch, 1, seq, d_ckv)
+        q_C = (c_Q @ self.W_UQ_UK).unsqueeze(1) # (batch, 1, seq, d_ckv)
 
         # Decoupled RoPE dimensions
         q_R = self.W_QR(c_Q)  # (batch, seq, num_heads * head_dim_decoupled_qk)
@@ -283,18 +284,26 @@ class MLAInference(MLA):
 
         if kv_cache is not None:
             c_KV, k_R = kv_cache.forward(layer_idx, c_KV, k_R)
-            k_R = k_R.unsqueeze(1) # (batch, 1, seq, head_dim_decoupled_qk)
-            c_KV = c_KV.unsqueeze(1) # (batch, 1, seq, d_ckv)
         
-        v = c_KV
+        c_KV = c_KV.unsqueeze(1)
+        k_R = k_R.unsqueeze(1) 
+        
+        v = c_KV.expand(-1, self.num_heads, -1, -1)
 
         freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
         q_R, k_R = apply_rope_real(q_R, k_R, freq_cis)
 
         # bring it together for the attention
+        
         k = torch.cat([c_KV, k_R], dim=-1)
-        q = torch.cat([q_C, q_R], dim=-1)
+        q = torch.cat([q_C.expand(-1, self.num_heads, -1, -1), q_R], dim=-1)
 
+        ## There is something wrong here with the shapes, not sure how to handle the heads.
+        ## Given the fused weight matrices we have "lost" the head_dim and now we've instead got
+        # the compressed dimensions? q_R has num heads but q_C does not because of the fused
+        # matrix W_UQ_UK?
+        
+        print(k.shape, q.shape, v.shape)
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
@@ -307,8 +316,7 @@ class MLAInference(MLA):
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, 1, seq, seq)
-            qk = qk + mask
-
+            qk = qk + mask[:, :, :seq_length, :seq_length]
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
 
@@ -316,7 +324,8 @@ class MLAInference(MLA):
 
         output = output.squeeze(1)
 
-        output = self.W_U_OV(output)
-        output = self.res_dropout(output)
+        output = output @ self.W_U_OV
+        output = self.res_dropout(output)   
 
+        print("output", output.shape)
         return output
