@@ -6,8 +6,8 @@ import torch.nn.functional as F
 from jaxtyping import Complex, Float
 from torch import Tensor
 
-from omni.modules.pos_embeddings import apply_rope_real
 from omni.modules.norm import RMSNorm
+from mla_rope import apply_rope_real
 
 class KVCacheMLA:
     def __init__(self, config, device: str = None, dtype: torch.dtype = None):
@@ -61,9 +61,7 @@ class MLA(nn.Module):
     config: Configuration containing:
         - num_heads (int): Number of query attention heads
         - d_model (int): Model dimension
-        - head_dim (int): Dimension of each attention head. As opposed to past attention mechanisms, the per-head dimension
-        does not increase the KV cache. As such, head_dim is typically set to > d_model // num_heads. DeepSeek use
-        head_dim = 3 * d_model // num_heads.
+        - head_dim (int): Dimension of each attention head. As opposed to past attention mechanisms, the per-head dimension does not increase the KV cache. As such, head_dim is typically set to > d_model // num_heads. DeepSeek use head_dim = 3 * d_model // num_heads.
         - d_ckv (int, optional): Low-rank (latent) KV dimension. d_ckv << (head_dim * num_heads). Defaults to 4 * head_dim.
         - d_cq (int, optional): Low-rank (latent) Q dimension. d_cq << (head_dim * num_heads). Defaults to 12 * num_heads.
         - head_dim_decoupled_qk (int, optional): Decoupled QK per-head dimension. Defaults to head_dim // 2.
@@ -81,9 +79,11 @@ class MLA(nn.Module):
         self.num_heads = config.num_heads
         self.head_dim = config.head_dim
         self.head_dim_decoupled_qk = config.head_dim_decoupled_qk
-        
         d_ckv = config.d_ckv
         d_cq = config.d_cq
+
+        if self.head_dim is None:
+            self.head_dim = 3 * config.d_model // self.num_heads
 
         if d_ckv is None:
             d_ckv = 4 * self.head_dim
@@ -127,7 +127,7 @@ class MLA(nn.Module):
         )
 
         self.W_QR = nn.Linear(
-            config.d_model,
+            d_cq,
             (self.head_dim_decoupled_qk * self.num_heads),
             bias=False,
         )
@@ -154,16 +154,15 @@ class MLA(nn.Module):
             torch.nn.functional, "scaled_dot_product_attention"
         )
 
-        assert config.pos_encoding_type == "rope"
-
     def forward(
         self,
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
-        kv_cache,
         pos_info: Optional[Tensor],
+        kv_cache,
+        layer_idx,
     ):
-        batch_size, seq_length, d_model = x.size()
+        batch_size, seq_length, _ = x.size()
 
         c_Q = self.q_norm(self.W_DQ(x))
 
@@ -190,12 +189,12 @@ class MLA(nn.Module):
         k_R = self.W_KR(x).unsqueeze(
             1
         )  # (batch, 1, seq, head_dim_decoupled_qk) cache during inference
-
+        
         freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
         q_R, k_R = apply_rope_real(q_R, k_R, freq_cis)
 
         # bring it together for the attention
-        k = torch.cat([k_C, k_R], dim=-1)
+        k = torch.cat([k_C, k_R.expand(-1, self.num_heads, -1, -1)], dim=-1)
         q = torch.cat([q_C, q_R], dim=-1)
 
         if self.flash_attn:
@@ -231,26 +230,12 @@ class MLAInference(MLA):
     implementing a low-rank key-value joint compression strategy. Emperically it achivies superior
     performance to MHA, while significantly reducing the memory requirements during inference.
 
-    Args:
-    config: Configuration containing:
-        - num_heads (int): Number of query attention heads
-        - d_model (int): Model dimension
-        - head_dim (int): Dimension of each attention head. As opposed to past attention mechanisms, the per-head dimension
-        does not increase the KV cache. As such, head_dim is typically set to > d_model // num_heads. DeepSeek use
-        head_dim = 3 * d_model // num_heads.
-        - d_ckv (int, optional): Low-rank (latent) KV dimension. d_ckv << (head_dim * num_heads). Defaults to 4 * head_dim.
-        - d_cq (int, optional): Low-rank (latent) Q dimension. d_cq << (head_dim * num_heads). Defaults to 12 * num_heads.
-        - head_dim_decoupled_qk (int, optional): Decoupled QK per-head dimension. Defaults to head_dim // 2.
-        - attention_bias (bool): Whether to use bias in linear projections
-        - attention_dropout (float): Dropout probability for attention and residual connections
-        - pos_encoding_type: (PositionEmbeddingScheme) Type of positional encoding. Has to be "rope".
-
     References:
          - "DeepSeek V2" (https://arxiv.org/abs/2405.04434)
          - "DeepSeek V3" (https://arxiv.org/abs/2412.19437)
     """
 
-    def __init__(self, config):
+    def __init__(self):
         super().__init__()
         self.fuse_weights()
 

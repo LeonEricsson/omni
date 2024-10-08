@@ -5,8 +5,6 @@ from jaxtyping import Int
 
 from omni.modules.config import TransformerConfig
 
-
-
 class KVCache:
     def __init__(self, config: TransformerConfig, device: str = None, dtype: torch.dtype = None):
         self.num_layers = config.num_layers

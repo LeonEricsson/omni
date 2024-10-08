@@ -81,9 +81,9 @@ def apply_rope_real(
 
     cos_rotations, sin_rotations = rotations
 
-    def apply_rotation(real, imag, cos_rot, sin_rot, len):
-        cos_rot = cos_rot[None, None, :len, :]
-        sin_rot = sin_rot[None, None, :len, :]
+    def apply_rotation(real, imag, cos_rot, sin_rot, length):
+        cos_rot = cos_rot[None, None, :length, :]
+        sin_rot = sin_rot[None, None, :length, :]
         
         rotated_real = real * cos_rot - imag * sin_rot
         rotated_imag = real * sin_rot + imag * cos_rot

@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
 from jaxtyping import Float, Int
-from logger import TrainingLogger
+from experiments.logger import TrainingLogger
 from torch.utils.data import DataLoader
 
 import wandb
@@ -37,8 +37,6 @@ llama_config = LlamaConfig(
     num_heads=8,
     num_kv_heads=8,
     num_layers=4,
-    rope_theta=0.1,
-    norm_eps=1e-6,
     activation_fn="silu",
     mlp_bias=False,
     mlp_dropout=0.0,

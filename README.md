@@ -21,3 +21,4 @@ my collection of paper implementations and experiments. built to be modular, eas
   - [ ] Training run
   - [ ] Verify KV Cache reduction
 - [ ] Differential Transformer
+- [ ] Swap config structure to importing modules instead
