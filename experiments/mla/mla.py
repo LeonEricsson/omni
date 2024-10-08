@@ -252,6 +252,7 @@ class MLAInference(MLA):
 
     def __init__(self, config):
         super().__init__()
+        self.fuse_weights()
 
     def fuse_weights(self):
         """Lazily compute and store fused weights for inference."""
