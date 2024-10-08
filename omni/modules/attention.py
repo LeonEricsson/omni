@@ -143,12 +143,14 @@ class MHA(nn.Module):
 
         """
         super().__init__()
+        assert config.d_model % config.num_heads == 0
+
         self.n_heads = config.num_heads
         self.head_dim = config.d_model // config.num_heads
         self.scale = self.head_dim**-0.5
 
         self.W_QKV = nn.Linear(
-            config.d_model, config.d_model * 3, bias=config.attention_bias
+            config.d_model, self.head_dim * config.num_heads * 3, bias=config.attention_bias
         )
         self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.attention_bias)
 

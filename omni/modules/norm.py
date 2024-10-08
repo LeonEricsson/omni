@@ -57,6 +57,7 @@ class LayerNorm(nn.Module):
         Args:
         config (TransformerConfig): Configuration dataclass containing:
             - d_model (int): Input dimension to normalize over (Layer dimension)
+        dim (int, optional): Dimension to normalize over. Defaults to None.
         eps (float, optional): Small constant for numerical stability. Defaults to 1e-5.
 
         References:
