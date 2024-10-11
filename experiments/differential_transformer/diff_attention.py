@@ -63,6 +63,11 @@ class DifferentialAttention(nn.Module):
 
         self.pos_encoding_type = config.pos_encoding_type
 
+    def flash_attention(self, q, k, v):
+        return F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.attn_dropout.p if self.training else 0.0, is_causal=True
+        )
+
     def forward(
         self,
         x: Float[Tensor, "batch seq d_model"],
@@ -91,12 +96,17 @@ class DifferentialAttention(nn.Module):
             q1, k1 = apply_rope_real(q1, k1, freq_cis)
             q2, k2 = apply_rope_real(q2, k2, freq_cis)
 
-        A1 = (q1 @ k1.transpose(2, 3)) / self.scale + mask # (batch, n_heads, seq, seq)
-        A2 = (q2 @ k2.transpose(2, 3)) / self.scale + mask  # (batch, n_heads, seq, seq)
+        if self.flash_attn:
+            A1 = self.flash_attention(q1, k1, v)
+            A2 = self.flash_attention(q2, k2, v)
+            output = (A1 - self._lambda * A2) @ v  # (batch, n_heads, seq, 2*head_dim)
+        else:
+            A1 = (q1 @ k1.transpose(2, 3)) / self.scale + mask # (batch, n_heads, seq, seq)
+            A2 = (q2 @ k2.transpose(2, 3)) / self.scale + mask  # (batch, n_heads, seq, seq)
 
-        A1 = self.attn_dropout(F.softmax(A1, dim=-1))
-        A2 = self.attn_dropout(F.softmax(A2, dim=-1))
-        output = (A1 - self._lambda * A2) @ v # (batch, n_heads, seq, 2*head_dim)
+            A1 = self.attn_dropout(F.softmax(A1, dim=-1))
+            A2 = self.attn_dropout(F.softmax(A2, dim=-1))
+            output = (A1 - self._lambda * A2) @ v # (batch, n_heads, seq, 2*head_dim)
 
         for i, norm in enumerate(self.group_norms):
             output[:, i] = norm(output[:, i])
