@@ -28,7 +28,6 @@ from omni.utils.setup import (
 from omni.utils.system import auto_device
 
 torch.set_float32_matmul_precision(precision="high")
-torch.autograd.set_detect_anomaly(True)
 
 model_config = DiffConfig(
     vocab_size=50258,
@@ -326,7 +325,7 @@ def main():
 
     checkpoint_dir = create_checkpoint_folder("Diff")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-
+    exit()
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,

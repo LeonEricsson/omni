@@ -21,6 +21,7 @@ class DiffConfig:
     d_model: Int
     num_layers: Int
     num_heads: Int
+    num_kv_heads: Int
     head_dim: Int = None
     hidden_dim: Int = None
 

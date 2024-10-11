@@ -22,3 +22,6 @@ my collection of paper implementations and experiments. built to be modular, eas
   - [ ] Verify KV Cache reduction
 - [ ] Differential Transformer
 - [ ] Swap config structure to importing modules instead
+- [ ] Compare GQA run with the optimized forward function.
+- [ ] GQA infernece check, i think the kv cache should come before
+- [ ] the k, v repetition?
