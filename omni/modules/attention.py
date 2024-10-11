@@ -105,7 +105,7 @@ class GQA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if False:
+        if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
@@ -142,12 +142,15 @@ class GQA(nn.Module):
 
         q = self.W_Q(x).unflatten(-1, (self.num_heads, self.head_dim))
         kv = self.W_KV(x).unflatten(-1, (2, self.num_kv_heads, self.head_dim))
-        # TODO CHECK THIS
+        
         k, v = kv[:, :, 0], kv[:, :, 1]
 
         q = q.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
+
+        if kv_cache is not None:
+            k, v = kv_cache.forward(layer_idx, k, v)
 
         # Expanding `k` and `v` implicitly to match the required heads
         k = k.expand(-1, self.kv_groups, -1, -1).reshape(
@@ -156,9 +159,6 @@ class GQA(nn.Module):
         v = v.expand(-1, self.kv_groups, -1, -1).reshape(
             batch_size, self.n_heads, seq_length, 2 * self.head_dim
         )
-
-        if kv_cache is not None:
-            k, v = kv_cache.forward(layer_idx, k, v)
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
@@ -188,7 +188,6 @@ class GQA(nn.Module):
         output = self.res_dropout(output)
 
         return output
-
 
 class MHA(nn.Module):
     def __init__(self, config):
@@ -255,7 +254,7 @@ class MHA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if False:  # self.flash_attn and not self.pos_encoding_type == "alibi":
+        if self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
