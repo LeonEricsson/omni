@@ -10,23 +10,31 @@ from omni.modules.pos_embeddings import apply_rope_real
 from omni.modules.norm import LayerNorm
 
 class DifferentialAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, layer_idx):
         """
-        Differential attention
+        Multi-head differential attention
 
         Args:
         config (TransformerConfig): Configuration dataclass containing:
+            - head_dim: Dimension of each attention head
             - num_heads: Number of attention heads
             - d_model: Model dimension
             - bias: Whether to use bias in linear layers
             - dropout: Dropout probability for attention and residual connections
-
+        layer_idx: The layer index in the transformer ∈ [0, L]
         """
         super().__init__()
         assert config.d_model % config.num_heads == 0
+        assert config.head_dim is not None
 
+        self.head_dim = config.head_dim
         self.n_heads = config.num_heads
-        self.head_dim = config.d_model // (2 * config.num_heads)
+
+        if self.n_heads is None:
+            self.n_heads = config.d_model // (2 * self.head_dim)
+
+        assert self.n_heads * 2 * self.head_dim == config.d_model
+        
         self.scale = self.head_dim**-0.5
 
         self.W_QKV = nn.Linear(
@@ -35,8 +43,18 @@ class DifferentialAttention(nn.Module):
 
         self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.attention_bias)
 
-        self.group_norms = nn.ModuleList([LayerNorm(dim=3) for _ in range(config.num_heads)])
-        #self.attn_dropout = nn.Dropout(config.attention_dropout)
+        self.group_norms = nn.ModuleList([LayerNorm(dim=2*self.head_dim) for _ in range(config.num_heads)])
+
+        self.lambda_init = 0.8 - 0.6 * torch.exp(torch.tensor(-0.3 * (layer_idx)))
+
+        self.lambda_q1 = nn.Parameter(torch.ones(2 * self.head_dim))  
+        self.lambda_k1 = nn.Parameter(torch.ones(2 * self.head_dim)) 
+        self.lambda_q2 = nn.Parameter(torch.ones(2 * self.head_dim)) 
+        self.lambda_k2 = nn.Parameter(torch.ones(2 * self.head_dim)) 
+
+        self._lambda = torch.exp(self.lambda_q1 * self.lambda_k1) - torch.exp(self.lambda_q2 * self.lambda_k2) + self.lambda_init
+
+        self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
         self.flash_attn: bool = hasattr(
@@ -73,19 +91,17 @@ class DifferentialAttention(nn.Module):
             q1, k1 = apply_rope_real(q1, k1, freq_cis)
             q2, k2 = apply_rope_real(q2, k2, freq_cis)
 
-        qk1 = (q1 @ k1.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-        qk1 = qk1 + mask
-        
-        qk2 = (q1 @ k1.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-        qk2 = qk2 + mask
+        A1 = (q1 @ k1.transpose(2, 3)) / self.scale + mask # (batch, n_heads, seq, seq)
+        A2 = (q2 @ k2.transpose(2, 3)) / self.scale + mask  # (batch, n_heads, seq, seq)
 
-        output = (F.softmax(qk1) - self.lbda * F.softmax(qk2)) @ v # (batch, n_heads, seq, 2*head_dim)
-        #qk = self.attn_dropout(qk)
+        A1 = self.attn_dropout(F.softmax(A1, dim=-1))
+        A2 = self.attn_dropout(F.softmax(A2, dim=-1))
+        output = (A1 - self._lambda * A2) @ v # (batch, n_heads, seq, 2*head_dim)
 
         for i, norm in enumerate(self.group_norms):
             output[:, i] = norm(output[:, i])
 
-        output = output * (1 - self.lbda_init)
+        output = output * (1 - self.lambda_init)
 
         output = output.transpose(1, 2).reshape(batch_size, seq_length, d_model)
 

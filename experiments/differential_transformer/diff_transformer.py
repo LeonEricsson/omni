@@ -16,6 +16,8 @@ from omni.modules.mlp import MLPType
 from omni.modules.norm import NormalizationType
 from omni.modules.pos_embeddings import PositionalEmbedding
 
+from diff_attention import DifferentialAttention
+
 @dataclass
 class DiffConfig:
     vocab_size: Int
@@ -38,10 +40,10 @@ class DiffConfig:
 
 
 class DiffBlock(nn.Module):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config: TransformerConfig, layer_idx: int):
         super().__init__()
 
-        self.attn = #
+        self.attn = DifferentialAttention(config, layer_idx)
         self.mlp = MLP_MAP[config.mlp](config)
         self.norm1 = NORM_MAP[config.normalization](config)
         self.norm2 = NORM_MAP[config.normalization](config)
@@ -74,7 +76,7 @@ class DiffTransformer(nn.Module):
 
         self.position_embedding = PositionalEmbedding(config)
 
-        self.blocks = nn.ModuleList([DiffBlock(config) for _ in range(config.num_layers)])
+        self.blocks = nn.ModuleList([DiffBlock(config, layer_idx) for layer_idx in range(config.num_layers)])
 
         self.norm_out = NORM_MAP[config.normalization](config)
 
