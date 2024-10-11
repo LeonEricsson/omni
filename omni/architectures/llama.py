@@ -18,6 +18,7 @@ class LlamaConfig:
     num_kv_heads: Int
     num_layers: Int
     hidden_dim: Int = None
+    head_dim: Int = None
 
     # components
     pos_encoding_type: PositionEmbeddingScheme = "rope"

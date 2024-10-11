@@ -27,6 +27,7 @@ class TransformerConfig:
     normalization: NormalizationType
     attention: AttentionType
 
+    head_dim: Int = None
     mlp_bias: Bool = True
     mlp_dropout: Optional[Float] = None
     attention_bias: Bool = True

@@ -95,17 +95,17 @@ class GQA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        k = torch.repeat_interleave(k, self.kv_groups, dim=1)
-        v = torch.repeat_interleave(v, self.kv_groups, dim=1)
-
         if kv_cache is not None:
             k, v = kv_cache.forward(layer_idx, k, v)
+
+        k = torch.repeat_interleave(k, self.kv_groups, dim=1)
+        v = torch.repeat_interleave(v, self.kv_groups, dim=1)
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if self.flash_attn:
+        if False:
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
@@ -116,7 +116,7 @@ class GQA(nn.Module):
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-            qk = qk + mask
+            qk = qk + mask[:, :, : qk.shape[-2], : qk.shape[-1]]
 
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
@@ -175,7 +175,7 @@ class GQA(nn.Module):
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-            qk = qk + mask
+            qk = qk + mask[:, :, :seq_length, :seq_length]
 
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
@@ -255,7 +255,7 @@ class MHA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if self.flash_attn and not self.pos_encoding_type == "alibi":
+        if False:  # self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
@@ -269,7 +269,8 @@ class MHA(nn.Module):
             if self.pos_encoding_type == "alibi":
                 alibi: Float[Tensor, "n_heads seq"] = pos_info
                 qk = qk + alibi[None, :, :, None]  # apply bias along key dimension
-            qk = qk + mask
+
+            qk = qk + mask[:, :, : qk.shape[-2], : qk.shape[-1]]
 
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
