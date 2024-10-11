@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from jaxtyping import Bool
-from jaxtyping import Float
-from jaxtyping import Int
+from jaxtyping import Bool, Float, Int
 
 from omni.modules.activations import ActivationFunction
 from omni.modules.attention import AttentionType
@@ -33,5 +31,6 @@ class TransformerConfig:
     mlp_dropout: Optional[Float] = None
     attention_bias: Bool = True
     attention_dropout: Optional[Float] = None
+    weight_tying: Bool = False
     rope_theta: Float = 10000.0
     norm_eps: Float = 1e-5

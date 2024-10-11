@@ -84,12 +84,12 @@ def apply_rope_real(
     def apply_rotation(real, imag, cos_rot, sin_rot, length):
         cos_rot = cos_rot[None, None, :length, :]
         sin_rot = sin_rot[None, None, :length, :]
-        
+
         rotated_real = real * cos_rot - imag * sin_rot
         rotated_imag = real * sin_rot + imag * cos_rot
-        
+
         return rotated_real, rotated_imag
-    
+
     q_rotated_real, q_rotated_imag = apply_rotation(
         q_real, q_imag, cos_rotations, sin_rotations, q.size(2)
     )
@@ -98,12 +98,8 @@ def apply_rope_real(
     )
 
     # interleave real/imaginary parts and reshape to original shape
-    rotated_q = torch.stack((q_rotated_real, q_rotated_imag), dim=4).view(
-        q.size()
-    )
-    rotated_k = torch.stack((k_rotated_real, k_rotated_imag), dim=4).view(
-        k.size()
-    )
+    rotated_q = torch.stack((q_rotated_real, q_rotated_imag), dim=4).view(q.size())
+    rotated_k = torch.stack((k_rotated_real, k_rotated_imag), dim=4).view(k.size())
 
     return rotated_q.type_as(q), rotated_k.type_as(k)
 
@@ -195,8 +191,12 @@ class PositionalEmbedding(nn.Module):
                 _create_absolute_positions(config.d_model, config.seq_len),
             )
         elif self.type == "rope":
+            head_dim = config.head_dim
+            if config.head_dim is None:
+                head_dim = config.d_model // config.num_heads
+
             cos_rotations, sin_rotations = precompute_freqs_cis_real(
-                config.d_model // config.num_heads,
+                head_dim,
                 config.seq_len,
                 config.rope_theta,
             )

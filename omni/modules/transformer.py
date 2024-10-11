@@ -1,14 +1,14 @@
 import torch.nn as nn
-from jaxtyping import Float
-from jaxtyping import Int
+from jaxtyping import Float, Int
 from torch import Tensor
 
 from omni.modules.attention import causal_attention_mask
 from omni.modules.block import Block
+from omni.modules.cache import KVCache
 from omni.modules.config import TransformerConfig
 from omni.modules.norm import NORM_MAP
 from omni.modules.pos_embeddings import PositionalEmbedding
-from omni.modules.cache import KVCache
+
 
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
@@ -24,6 +24,9 @@ class Transformer(nn.Module):
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
+        if config.weight_tying:
+            self.vocab_proj.weight = self.token_emb.weight
+
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
     def forward(
@@ -33,9 +36,9 @@ class Transformer(nn.Module):
         kv_cache: KVCache = None,
     ) -> Float[Tensor, "batch seq vocab_size"]:
         mask = self.causal_mask
-        
+
         if self.training:
-            mask &= pad_mask[:, None, None, :]
+            mask = mask & pad_mask[:, None, None, :]
 
         x = self.token_emb(x)
 

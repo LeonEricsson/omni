@@ -1,22 +1,18 @@
 from dataclasses import dataclass
 
 import torch.nn as nn
-from torch import Tensor
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import Bool
-
-from omni.modules.config import TransformerConfig
-from omni.modules.attention import causal_attention_mask
-from omni.modules.mlp import MLP_MAP
-from omni.modules.norm import NORM_MAP
-from omni.modules.cache import KVCache
-from omni.modules.activations import ActivationFunction
-from omni.modules.mlp import MLPType
-from omni.modules.norm import NormalizationType
-
+from jaxtyping import Bool, Float, Int
 from mla import MLA
 from mla_rope import MLAPositionalEmbedding
+from torch import Tensor
+
+from omni.modules.activations import ActivationFunction
+from omni.modules.attention import causal_attention_mask
+from omni.modules.cache import KVCache
+from omni.modules.config import TransformerConfig
+from omni.modules.mlp import MLP_MAP, MLPType
+from omni.modules.norm import NORM_MAP, NormalizationType
+
 
 @dataclass
 class MLAConfig:
@@ -38,7 +34,8 @@ class MLAConfig:
     mlp_dropout: Float = False
     rope_theta: Float = 10000.0
     norm_eps: Float = 1e-5
-    
+    weight_tying: Bool = False
+
     d_ckv: Int = None
     d_cq: Int = None
     attention_dropout: Float = 0.0
@@ -72,7 +69,7 @@ class MLABlock(nn.Module):
         x = x + mlp_out  # add to residual stream
 
         return x
-    
+
 
 class MLATransformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
@@ -81,11 +78,16 @@ class MLATransformer(nn.Module):
 
         self.position_embedding = MLAPositionalEmbedding(config)
 
-        self.blocks = nn.ModuleList([MLABlock(config) for _ in range(config.num_layers)])
+        self.blocks = nn.ModuleList(
+            [MLABlock(config) for _ in range(config.num_layers)]
+        )
 
         self.norm_out = NORM_MAP[config.normalization](config)
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        if config.weight_tying:
+            self.vocab_proj.weight = self.token_emb.weight
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
@@ -96,9 +98,9 @@ class MLATransformer(nn.Module):
         kv_cache: KVCache = None,
     ) -> Float[Tensor, "batch seq vocab_size"]:
         mask = self.causal_mask
-        
+
         if self.training:
-            mask &= pad_mask[:, None, None, :]
+            mask = mask & pad_mask[:, None, None, :]
 
         x = self.token_emb(x)
 

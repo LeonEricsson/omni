@@ -29,4 +29,5 @@ class GPTConfig:
     mlp_dropout: Float = 0.1
     attention_bias: Bool = True
     attention_dropout: Float = 0.1
+    weight_tying: Bool = False
     norm_eps: Float = 1e-5

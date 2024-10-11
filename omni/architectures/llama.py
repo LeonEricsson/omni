@@ -30,5 +30,6 @@ class LlamaConfig:
     mlp_dropout: Float = False
     attention_bias: Bool = False
     attention_dropout: Float = 0.0
+    weight_tying: Bool = False
     rope_theta: Float = 10000.0
     norm_eps: Float = 1e-5

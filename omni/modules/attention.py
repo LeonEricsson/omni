@@ -37,9 +37,11 @@ class GQA(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        assert config.num_heads % config.num_kv_heads == 0
+        assert config.d_model % config.num_heads == 0
+
         self.num_heads = config.num_heads
         self.num_kv_heads = config.num_kv_heads
-        assert self.num_heads % self.num_kv_heads == 0
         self.kv_groups = self.num_heads // self.num_kv_heads
         self.head_dim = config.d_model // config.num_heads
         self.scale = self.head_dim**-0.5
@@ -98,7 +100,7 @@ class GQA(nn.Module):
 
         if kv_cache is not None:
             k, v = kv_cache.forward(layer_idx, k, v)
-            
+
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
@@ -150,7 +152,9 @@ class MHA(nn.Module):
         self.scale = self.head_dim**-0.5
 
         self.W_QKV = nn.Linear(
-            config.d_model, self.head_dim * config.num_heads * 3, bias=config.attention_bias
+            config.d_model,
+            self.head_dim * config.num_heads * 3,
+            bias=config.attention_bias,
         )
         self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.attention_bias)
 

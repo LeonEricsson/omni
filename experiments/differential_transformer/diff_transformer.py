@@ -1,42 +1,42 @@
 from dataclasses import dataclass
 
 import torch.nn as nn
-from torch import Tensor
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import Bool
-
-from omni.modules.config import TransformerConfig
-from omni.modules.attention import causal_attention_mask
-from omni.modules.mlp import MLP_MAP
-from omni.modules.norm import NORM_MAP
-from omni.modules.cache import KVCache
-from omni.modules.activations import ActivationFunction
-from omni.modules.mlp import MLPType
-from omni.modules.norm import NormalizationType
-from omni.modules.pos_embeddings import PositionalEmbedding
-
 from diff_attention import DifferentialAttention
+from jaxtyping import Bool, Float, Int
+from torch import Tensor
+
+from omni.modules.activations import ActivationFunction
+from omni.modules.attention import causal_attention_mask
+from omni.modules.cache import KVCache
+from omni.modules.config import TransformerConfig
+from omni.modules.mlp import MLP_MAP, MLPType
+from omni.modules.norm import NORM_MAP, NormalizationType
+from omni.modules.pos_embeddings import PositionalEmbedding, PositionEmbeddingScheme
+
 
 @dataclass
 class DiffConfig:
     vocab_size: Int
     seq_len: Int
     d_model: Int
-    num_heads: Int
     num_layers: Int
+    num_heads: Int
+    head_dim: Int = None
     hidden_dim: Int = None
 
     # components
+    pos_encoding_type: PositionEmbeddingScheme = "rope"
     activation_fn: ActivationFunction = "silu"
     mlp: MLPType = "mlp_swiglu"
     normalization: NormalizationType = "rmsnorm"
 
     mlp_bias: Bool = False
     mlp_dropout: Float = False
+    attention_dropout: Float = 0.1
+    attention_bias: Bool = True
+    weight_tying: Bool = False
     rope_theta: Float = 10000.0
     norm_eps: Float = 1e-5
-    attention_dropout: Float = 0.0
 
 
 class DiffBlock(nn.Module):
@@ -67,7 +67,7 @@ class DiffBlock(nn.Module):
         x = x + mlp_out  # add to residual stream
 
         return x
-    
+
 
 class DiffTransformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
@@ -76,11 +76,16 @@ class DiffTransformer(nn.Module):
 
         self.position_embedding = PositionalEmbedding(config)
 
-        self.blocks = nn.ModuleList([DiffBlock(config, layer_idx) for layer_idx in range(config.num_layers)])
+        self.blocks = nn.ModuleList(
+            [DiffBlock(config, layer_idx) for layer_idx in range(config.num_layers)]
+        )
 
         self.norm_out = NORM_MAP[config.normalization](config)
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        if config.weight_tying:
+            self.vocab_proj.weight = self.token_emb.weight
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
@@ -91,9 +96,9 @@ class DiffTransformer(nn.Module):
         kv_cache: KVCache = None,
     ) -> Float[Tensor, "batch seq vocab_size"]:
         mask = self.causal_mask
-        
+
         if self.training:
-            mask &= pad_mask[:, None, None, :]
+            mask = mask & pad_mask[:, None, None, :]
 
         x = self.token_emb(x)
 

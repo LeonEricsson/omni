@@ -13,13 +13,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
+from diff_transformer import DiffConfig, DiffTransformer
 from jaxtyping import Float, Int
 from logger import TrainingLogger
 from torch.utils.data import DataLoader
 
 import wandb
-from omni.architectures.llama import LlamaConfig
-from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.setup import (
     create_checkpoint_folder,
@@ -29,30 +28,26 @@ from omni.utils.setup import (
 from omni.utils.system import auto_device
 
 torch.set_float32_matmul_precision(precision="high")
+torch.autograd.set_detect_anomaly(True)
 
-llama_config = LlamaConfig(
+model_config = DiffConfig(
     vocab_size=50258,
     seq_len=512,
-    d_model=768,
-    num_heads=8,
-    num_kv_heads=8,
-    num_layers=6,
-    activation_fn="silu",
-    mlp_bias=False,
+    d_model=256,
+    head_dim=32,
+    num_layers=4,
+    num_heads=4,
+    hidden_dim=512,
+    mlp_bias=True,
+    attention_bias=True,
     mlp_dropout=0.1,
-    attention_bias=False,
     attention_dropout=0.1,
-    weight_tying=False,
-    pos_encoding_type="rope",
-    mlp="mlp_swiglu",
-    normalization="rmsnorm",
-    attention="gqa",
 )
 
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 32,
+    "batch_size": 1,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
     "num_epochs": 2,
@@ -63,7 +58,7 @@ training_config = {
     "gradient_acc_steps": 4,
     "seed": 42,
     "num_workers": 4,
-    "device": "",  # auto-detect
+    "device": "cpu",  # auto-detect
     "num_devices": 1,
     "strategy": "auto",
     "precision": "16-mixed",
@@ -72,11 +67,10 @@ training_config = {
 
 def setup_wandb(config: Dict[str, Any]) -> None:
     wandb.init(
-        project="Llama",
+        project="DIFF",
         config=config,
-        notes="LLaMA architecture training on TinyStories",
-        tags=["llama", "tinystories", "pre-training"],
-        mode="online",
+        notes="Differential Transformer",
+        mode="disabled",
     )
 
 
@@ -277,14 +271,13 @@ def main():
     fabric.launch()
     fabric.seed_everything(training_config["seed"])
 
-    checkpoint_dir = create_checkpoint_folder("llama-30M")
-    setup_wandb({**llama_config.__dict__, **training_config})
+    setup_wandb({**model_config.__dict__, **training_config})
 
     ### DATA ###
     data_metadata = extract_metadata(training_config["dataset_dir"])
     max_seq_length = data_metadata["preprocessing_params"]["max_seq_length"]
     pad_token_id = data_metadata["pad_token_id"]
-    assert max_seq_length >= llama_config.seq_len
+    assert max_seq_length >= model_config.seq_len
 
     dataset = load_from_disk(str(training_config["dataset_dir"]))
     train_size = int(0.99 * len(dataset))
@@ -307,7 +300,7 @@ def main():
     val_dataloader = init_dataloader(val_dataset)
 
     ### MODEL ###
-    model = Transformer(llama_config)
+    model = DiffTransformer(model_config)
     # if device.type == "cuda":
     #     model = torch.compile(model, fullgraph=True)
 
@@ -331,6 +324,7 @@ def main():
 
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
+    checkpoint_dir = create_checkpoint_folder("Diff")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
 
     model = train(

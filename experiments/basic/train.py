@@ -13,10 +13,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_from_disk
 from jaxtyping import Float, Int
-from experiments.logger import TrainingLogger
 from torch.utils.data import DataLoader
 
 import wandb
+from experiments.logger import TrainingLogger
 from omni.architectures.llama import LlamaConfig
 from omni.modules.transformer import Transformer
 from omni.utils.lr_schedule import CosineWarmupScheduler
@@ -32,9 +32,9 @@ model_config = LlamaConfig(
     num_kv_heads=4,
     num_layers=6,
     activation_fn="silu",
-    mlp_bias=False,
+    mlp_bias=True,
     mlp_dropout=0.0,
-    attention_bias=False,
+    attention_bias=True,
     attention_dropout=0.0,
     pos_encoding_type="alibi",
     mlp="mlp_swiglu",
