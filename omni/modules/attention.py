@@ -12,8 +12,8 @@ AttentionType = Literal["mha", "gqa"]
 
 
 def causal_attention_mask(sequence_length: int, dtype=torch.float32):
-    mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype))
-    mask = mask.masked_fill(mask == 0, float("-inf")) 
+    mask = torch.triu(torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype), diagonal=1)
+    mask = mask.masked_fill(mask == 1, float("-inf")) 
     return mask
 
 
@@ -101,7 +101,7 @@ class GQA(nn.Module):
         # to support single step inference
         start = k.shape[2] - q.shape[2]
         end = k.shape[2]
-        mask = mask[:, :, start:end, :k.shape[2]]
+        mask = mask[:, :, start:end, :k.shape[2]].to(q.dtype)
 
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
@@ -195,7 +195,7 @@ class MHA(nn.Module):
         # to support single step inference
         start = k.shape[2] - q.shape[2]
         end = k.shape[2]
-        mask = mask[:, :, start:end, :k.shape[2]]
+        mask = mask[:, :, start:end, :k.shape[2]].to(q.dtype)
 
         if self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(

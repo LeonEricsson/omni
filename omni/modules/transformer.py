@@ -10,6 +10,7 @@ from omni.modules.config import TransformerConfig
 from omni.modules.norm import NORM_MAP
 from omni.modules.pos_embeddings import PositionalEmbedding
 
+import torch
 
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
@@ -48,7 +49,9 @@ class Transformer(nn.Module):
         mask = self.causal_mask
 
         if self.training:
-            mask = mask & pad_mask[:, None, None, :]
+            pad_mask = pad_mask[:, None, None, :].float() 
+            pad_mask = pad_mask.masked_fill(pad_mask == 0, float('-inf')) 
+            mask += pad_mask 
 
         x = self.token_emb(x)
 

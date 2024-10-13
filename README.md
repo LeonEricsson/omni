@@ -22,5 +22,5 @@ my collection of paper implementations and experiments. built to be modular, eas
   - [ ] Verify KV Cache reduction
 - [x] Inference engine
 
-### todo small
+### todo sides
 - [ ] Swap config structure to importing modules instead
