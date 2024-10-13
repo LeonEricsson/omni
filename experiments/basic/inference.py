@@ -38,7 +38,7 @@ def main():
     )
     model.load_state_dict(checkpoint["model"])
 
-    device = auto_device("cpu")
+    device = auto_device()
     inference = Inference(
         model, tokenizer, device=device, temperature=0, max_length=100
     )
@@ -52,11 +52,11 @@ def main():
     start_time = time.perf_counter()
 
     # Generate text
-    # for token in inference.generate_nonkvcache(prompt):
-    #     print(tokenizer.decode([token]), end="", flush=True)
-
-    for token in inference.generate(prompt, kv_cache):
+    for token in inference.generate_nonkvcache(prompt):
         print(tokenizer.decode([token]), end="", flush=True)
+
+    # for token in inference.generate(prompt, kv_cache):
+    #     print(tokenizer.decode([token]), end="", flush=True)
 
     end_time = time.perf_counter()
     tokens_per_sec = 100 / (end_time - start_time)

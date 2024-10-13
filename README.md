@@ -14,14 +14,14 @@ my collection of paper implementations and experiments. built to be modular, eas
 ### todo
 
 - [ ] Train 20M small model on >1B tokens
-- [x] Inference engine
 - [x] KV Cache
-- MLA
+- [ ] Differential Transformer
+- [ ] MLA
   - [x] KV Cache
   - [ ] Training run
   - [ ] Verify KV Cache reduction
-- [ ] Differential Transformer
+- [x] Inference engine
+
+### todo small
+- [ ] There is something wrong with the kv cache
 - [ ] Swap config structure to importing modules instead
-- [ ] Compare GQA run with the optimized forward function.
-- [ ] GQA infernece check, i think the kv cache should come before
-- [ ] the k, v repetition?

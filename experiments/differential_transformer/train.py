@@ -32,13 +32,13 @@ torch.set_float32_matmul_precision(precision="high")
 model_config = DiffConfig(
     vocab_size=50258,
     seq_len=512,
-    d_model=256,
-    head_dim=32,
-    num_layers=4,
+    d_model=768,
+    num_layers=6,
+    head_dim=96,
     num_heads=4,
-    hidden_dim=512,
-    mlp_bias=True,
-    attention_bias=True,
+    num_kv_heads=2,
+    mlp_bias=False,
+    attention_bias=False,
     mlp_dropout=0.1,
     attention_dropout=0.1,
 )
@@ -46,7 +46,7 @@ model_config = DiffConfig(
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 1,
+    "batch_size": 32,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
     "num_epochs": 2,
@@ -57,7 +57,7 @@ training_config = {
     "gradient_acc_steps": 4,
     "seed": 42,
     "num_workers": 4,
-    "device": "cpu",  # auto-detect
+    "device": "",  # auto-detect
     "num_devices": 1,
     "strategy": "auto",
     "precision": "16-mixed",
@@ -69,7 +69,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         project="DIFF",
         config=config,
         notes="Differential Transformer",
-        mode="disabled",
+        mode="online",
     )
 
 
@@ -300,8 +300,8 @@ def main():
 
     ### MODEL ###
     model = DiffTransformer(model_config)
-    # if device.type == "cuda":
-    #     model = torch.compile(model, fullgraph=True)
+    if device.type == "cuda":
+        model = torch.compile(model, fullgraph=True)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -325,7 +325,7 @@ def main():
 
     checkpoint_dir = create_checkpoint_folder("Diff")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-    exit()
+
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,

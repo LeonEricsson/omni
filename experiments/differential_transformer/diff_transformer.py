@@ -20,9 +20,9 @@ class DiffConfig:
     seq_len: Int
     d_model: Int
     num_layers: Int
-    num_heads: Int
-    num_kv_heads: Int
-    head_dim: Int = None
+    head_dim: Int
+    num_heads: Int = None
+    num_kv_heads: Int = None
     hidden_dim: Int = None
 
     # components

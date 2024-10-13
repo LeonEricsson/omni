@@ -42,7 +42,7 @@ llama_config = LlamaConfig(
     mlp_dropout=0.1,
     attention_bias=False,
     attention_dropout=0.1,
-    weight_tying=False,
+    weight_tying=True,
     pos_encoding_type="rope",
     mlp="mlp_swiglu",
     normalization="rmsnorm",
@@ -50,12 +50,12 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
-    "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
+    "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
+    # "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
     "batch_size": 32,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
-    "num_epochs": 2,
+    "num_epochs": 1,
     "eval_every": 2000,
     "warmup_steps": 1000,
     "tot_steps": 1e6,
@@ -308,8 +308,8 @@ def main():
 
     ### MODEL ###
     model = Transformer(llama_config)
-    # if device.type == "cuda":
-    #     model = torch.compile(model, fullgraph=True)
+    if device.type == "cuda":
+        model = torch.compile(model, fullgraph=True)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),

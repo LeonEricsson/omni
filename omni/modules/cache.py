@@ -1,5 +1,5 @@
 import torch
-from jaxtyping import Float, Int
+from jaxtyping import Float
 from torch import Tensor
 
 from omni.modules.config import TransformerConfig
@@ -43,7 +43,7 @@ class KVCache:
         cache_len = self.cache_lengths[layer_idx].item()
         new_len = k.size(2)
         max_len = self.max_seq_len
-        
+
         if cache_len + new_len > max_len:
             overflow = cache_len + new_len - max_len
             self.k[:, layer_idx, :, :-overflow, :] = self.k[

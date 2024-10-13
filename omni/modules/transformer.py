@@ -26,6 +26,9 @@ class Transformer(nn.Module):
 
         if config.weight_tying:
             self.vocab_proj.weight = self.token_emb.weight
+            nn.init.normal_(
+                self.token_emb.weight, mean=0.0, std=1.0 / (config.d_model**0.5)
+            )
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
