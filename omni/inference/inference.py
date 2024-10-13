@@ -108,26 +108,3 @@ class Inference:
 
             generated = torch.cat((generated, next_token.unsqueeze(0)), dim=-1)
             token_count += 1
-
-    @torch.no_grad()
-    def generate_both(self, prompt: str, kv_cache: KVCache):
-        prompt = "Once"
-        prompt_input = self.tokenizer(prompt, return_tensors="pt").input_ids.to(
-            self.device
-        )
-
-        # prefill stage
-        generated = prompt_input
-        token_count = 0
-        while token_count < self.max_length:
-            outputs = self.model(generated[:, -1:], kv_cache=kv_cache)
-            # outputs = self.model(generated, kv_cache=kv_cache)
-            next_token = self._sample(outputs[0, -1, :])
-
-            yield next_token.item()
-
-            if next_token.item() == self.tokenizer.eos_token_id:
-                break
-
-            generated = torch.cat((generated, next_token.unsqueeze(0)), dim=-1)
-            token_count += 1

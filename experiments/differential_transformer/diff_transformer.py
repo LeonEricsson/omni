@@ -1,3 +1,4 @@
+from typing import List
 from dataclasses import dataclass
 
 import torch.nn as nn
@@ -55,12 +56,11 @@ class DiffBlock(nn.Module):
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info,
         kv_cache,
-        layer_idx,
     ):
         """Pre-norm Transformer block."""
 
         # Self-attention block
-        attn_out = self.attn(self.norm1(x), mask, pos_info, kv_cache, layer_idx)
+        attn_out = self.attn(self.norm1(x), mask, pos_info, kv_cache)
         x = x + attn_out  # add to residual stream
 
         # MLP block
@@ -90,11 +90,17 @@ class DiffTransformer(nn.Module):
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
+    def get_kv_cache_layer(self, kv_cache, layer_idx):
+        if not kv_cache:
+            return None
+        
+        return kv_cache[layer_idx]
+
     def forward(
         self,
         x: Int[Tensor, "batch seq"],
         pad_mask: Int[Tensor, "batch seq"] = None,
-        kv_cache: KVCache = None,
+        kv_cache: List[KVCache] = [],
     ) -> Float[Tensor, "batch seq vocab_size"]:
         mask = self.causal_mask
 
@@ -106,7 +112,7 @@ class DiffTransformer(nn.Module):
         x, pos_info = self.position_embedding(x)
 
         for i, block in enumerate(self.blocks):
-            x = block(x, mask, pos_info, kv_cache, layer_idx=i)
+            x = block(x, mask, pos_info, self.get_kv_cache_layer(kv_cache, i))
 
         x = self.norm_out(x)
 

@@ -1,3 +1,4 @@
+from typing import List
 import torch.nn as nn
 from jaxtyping import Float, Int
 from torch import Tensor
@@ -32,11 +33,17 @@ class Transformer(nn.Module):
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
+    def get_kv_cache_layer(self, kv_cache, layer_idx):
+        if not kv_cache:
+            return None
+        
+        return kv_cache[layer_idx]
+
     def forward(
         self,
         x: Int[Tensor, "batch seq"],
         pad_mask: Int[Tensor, "batch seq"] = None,
-        kv_cache: KVCache = None,
+        kv_cache: List[KVCache] = [],
     ) -> Float[Tensor, "batch seq vocab_size"]:
         mask = self.causal_mask
 
@@ -47,10 +54,8 @@ class Transformer(nn.Module):
 
         x, pos_info = self.position_embedding(x)
 
-        updated_kv_cache = []
         for i, block in enumerate(self.blocks):
-            x = block(x, mask, pos_info, kv_cache[i], layer_idx=i)
-            # updated_kv_cache.append(updated_block_kv_cache)
+            x = block(x, mask, pos_info, self.get_kv_cache_layer(kv_cache, i))
 
         x = self.norm_out(x)
 

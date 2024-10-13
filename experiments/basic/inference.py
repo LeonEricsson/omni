@@ -37,7 +37,7 @@ def main():
     model.load_state_dict(checkpoint["model"])
 
     device = auto_device("cpu")
-    inference = Inference(model, tokenizer, device=device, temperature=0, max_length=2)
+    inference = Inference(model, tokenizer, device=device, temperature=0, max_length=3)
     # kv_cache = KVCache(model_config, device=device)
     kv_cache = [KVCache(model_config.seq_len) for _ in range(model_config.num_layers)]
 
@@ -52,10 +52,7 @@ def main():
     # for token in inference.generate_nonkvcache(prompt):
     #     print(tokenizer.decode([token]), end="", flush=True)
 
-    # for token in inference.generate(prompt, kv_cache):
-    #     print(tokenizer.decode([token]), end="", flush=True)
-
-    for token in inference.generate_both(prompt, kv_cache):
+    for token in inference.generate(prompt, kv_cache):
         print(tokenizer.decode([token]), end="", flush=True)
 
     end_time = time.perf_counter()

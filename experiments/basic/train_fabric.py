@@ -46,13 +46,13 @@ llama_config = LlamaConfig(
     pos_encoding_type="rope",
     mlp="mlp_swiglu",
     normalization="rmsnorm",
-    attention="mha",
+    attention="gqa",
 )
 
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 32,
+    "batch_size": 1,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
     "num_epochs": 8,
@@ -76,7 +76,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         config=config,
         notes="LLaMA architecture training on TinyStories",
         tags=["llama", "tinystories", "pre-training"],
-        mode="online",
+        mode="disabled",
     )
 
 
@@ -332,7 +332,6 @@ def main():
 
     checkpoint_dir = create_checkpoint_folder("llama-30M")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-    exit()
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,

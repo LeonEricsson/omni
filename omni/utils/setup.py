@@ -23,7 +23,7 @@ def validate_model_initialization(dataset, model, device, ignore_index=-1):
 
     model.eval()
 
-    subset_indices = sample(range(len(dataset)), min(32, len(dataset)))
+    subset_indices = sample(range(len(dataset)), min(8, len(dataset)))
     subset = Subset(dataset, subset_indices)
     dataloader = DataLoader(subset, batch_size=32, shuffle=True)
 
@@ -36,7 +36,7 @@ def validate_model_initialization(dataset, model, device, ignore_index=-1):
     assert input_ids.size(1) == attention_mask.size(1), "Sequence lengths don't match"
 
     with torch.no_grad():
-        logits, _ = model(input_ids, attention_mask)
+        logits = model(input_ids, attention_mask)
 
         batch_size, seq_len, vocab_size = logits.size()
 

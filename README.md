@@ -23,5 +23,4 @@ my collection of paper implementations and experiments. built to be modular, eas
 - [x] Inference engine
 
 ### todo small
-- [ ] There is something wrong with the kv cache
 - [ ] Swap config structure to importing modules instead

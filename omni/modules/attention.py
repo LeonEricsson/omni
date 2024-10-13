@@ -11,11 +11,10 @@ from omni.modules.pos_embeddings import apply_rope_real
 AttentionType = Literal["mha", "gqa"]
 
 
-def causal_attention_mask(sequence_length: Int) -> Float[Int, "1 1 seq seq"]:
-    mask = torch.tril(
-        torch.ones((1, 1, sequence_length, sequence_length), dtype=torch.int32)
-    )
-    return mask * 1 + (1 - mask) * -10000
+def causal_attention_mask(sequence_length: int, dtype=torch.float32):
+    mask = torch.tril(torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype))
+    mask = mask.masked_fill(mask == 0, float("-inf")) 
+    return mask
 
 
 class GQA(nn.Module):
@@ -78,7 +77,6 @@ class GQA(nn.Module):
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
         kv_cache,
-        layer_idx: Optional[int],
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -91,7 +89,7 @@ class GQA(nn.Module):
         v = v.transpose(1, 2)
 
         if kv_cache is not None:
-            k, v = kv_cache.forward(layer_idx, k, v)
+            k, v = kv_cache.forward(k, v)
 
         k = torch.repeat_interleave(k, self.kv_groups, dim=1)
         v = torch.repeat_interleave(v, self.kv_groups, dim=1)
@@ -100,18 +98,22 @@ class GQA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
+        # to support single step inference
+        start = k.shape[2] - q.shape[2]
+        end = k.shape[2]
+        mask = mask[:, :, start:end, :k.shape[2]]
+
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
                 v,
-                attn_mask=None,
+                attn_mask=mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
-                is_causal=True,
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
-            qk = qk + mask[:, :, :seq_length, :seq_length]
+            qk = qk + mask
 
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
@@ -190,17 +192,18 @@ class MHA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if self.flash_attn and not self.pos_encoding_type == "alibi":
-            seq_len_q, seq_len_k = q.shape[2], k.shape[2]
-            causal_mask = mask[:, :, :seq_len_q, :seq_len_k].float()
-            print(causal_mask)
+        # to support single step inference
+        start = k.shape[2] - q.shape[2]
+        end = k.shape[2]
+        mask = mask[:, :, start:end, :k.shape[2]]
 
+        if self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
                 v,
-                attn_mask=causal_mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
+                attn_mask=mask
             )
 
         else:
@@ -209,13 +212,13 @@ class MHA(nn.Module):
                 alibi: Float[Tensor, "n_heads seq"] = pos_info
                 qk = qk + alibi[None, :, :, None]  # apply bias along key dimension
 
-            qk = qk + mask[:, :, : qk.shape[-2], : qk.shape[-1]]
-
+            qk = qk + mask
+            
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
 
-            output = qk @ v
-
+            output = qk @ v    
+        
         output = output.transpose(1, 2).reshape(batch_size, seq_length, d_model)
 
         output = self.W_O(output)

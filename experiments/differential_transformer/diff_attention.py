@@ -80,13 +80,13 @@ class DifferentialAttention(nn.Module):
 
         self.pos_encoding_type = config.pos_encoding_type
 
-    def flash_attention(self, q, k, v):
+    def flash_attention(self, q, k, v, mask):
         return F.scaled_dot_product_attention(
             q,
             k,
             v,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
-            is_causal=True,
+            attn_mask=mask,
         )
 
     def forward(
@@ -95,7 +95,6 @@ class DifferentialAttention(nn.Module):
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
         kv_cache,
-        layer_idx,
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -127,15 +126,20 @@ class DifferentialAttention(nn.Module):
             + self.lambda_init
         )
 
+        # to support single step inference
+        start = k.shape[2] - q.shape[2]
+        end = k.shape[2]
+        mask = mask[:, :, start:end, :k.shape[2]]
+
         if self.flash_attn:
-            A1 = self.flash_attention(q1, k1, v)
-            A2 = self.flash_attention(q2, k2, v)
+            A1 = self.flash_attention(q1, k1, v, mask)
+            A2 = self.flash_attention(q2, k2, v, mask)
             output = A1 - _lambda * A2  # (batch, n_heads, seq, 2*head_dim)
         else:
             A1 = (q1 @ k1.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
             A2 = (q2 @ k2.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
             A = A1 - _lambda * A2
-            A = self.attn_dropout(F.softmax(A + mask, dim=-1))  # Apply mask once
+            A = self.attn_dropout(F.softmax(A + mask, dim=-1))
             output = A @ v  # (batch, n_heads, seq, 2*head_dim)
 
         output = torch.cat(
