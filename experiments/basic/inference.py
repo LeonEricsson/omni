@@ -33,18 +33,15 @@ def main():
 
     model = Transformer(model_config)
 
-    checkpoint = torch.load(
-        "checkpoints/llama-30M_20250203_142013/init.ckpt", weights_only=True
-    )
+    checkpoint = torch.load("checkpoints/mha/init.ckpt", weights_only=True)
     model.load_state_dict(checkpoint["model"])
 
-    device = auto_device()
-    inference = Inference(
-        model, tokenizer, device=device, temperature=0, max_length=100
-    )
-    kv_cache = KVCache(model_config, device=device)
+    device = auto_device("cpu")
+    inference = Inference(model, tokenizer, device=device, temperature=0, max_length=2)
+    # kv_cache = KVCache(model_config, device=device)
+    kv_cache = [KVCache(model_config.seq_len) for _ in range(model_config.num_layers)]
 
-    prompt = "Once upon a time "
+    prompt = "Once"
 
     print(prompt, end="", flush=True)
     import time
@@ -52,11 +49,14 @@ def main():
     start_time = time.perf_counter()
 
     # Generate text
-    for token in inference.generate_nonkvcache(prompt):
-        print(tokenizer.decode([token]), end="", flush=True)
+    # for token in inference.generate_nonkvcache(prompt):
+    #     print(tokenizer.decode([token]), end="", flush=True)
 
     # for token in inference.generate(prompt, kv_cache):
     #     print(tokenizer.decode([token]), end="", flush=True)
+
+    for token in inference.generate_both(prompt, kv_cache):
+        print(tokenizer.decode([token]), end="", flush=True)
 
     end_time = time.perf_counter()
     tokens_per_sec = 100 / (end_time - start_time)

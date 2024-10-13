@@ -47,8 +47,10 @@ class Transformer(nn.Module):
 
         x, pos_info = self.position_embedding(x)
 
+        updated_kv_cache = []
         for i, block in enumerate(self.blocks):
-            x = block(x, mask, pos_info, kv_cache, layer_idx=i)
+            x = block(x, mask, pos_info, kv_cache[i], layer_idx=i)
+            # updated_kv_cache.append(updated_block_kv_cache)
 
         x = self.norm_out(x)
 

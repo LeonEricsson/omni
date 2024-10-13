@@ -28,7 +28,7 @@ class Block(nn.Module):
         """Pre-norm Transformer block."""
 
         # Self-attention block
-        attn_out = self.attn(self.norm1(x), mask, pos_info, kv_cache, layer_idx)
+        attn_out = self.attn(self.norm1(x), mask, pos_info, kv_cache)
         x = x + attn_out  # add to residual stream
 
         # MLP block

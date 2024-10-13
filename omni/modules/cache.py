@@ -6,7 +6,32 @@ from omni.modules.config import TransformerConfig
 
 
 class KVCache:
-    """Static size KV Cache"""
+    def __init__(self, max_seq_len: int):
+        self.max_seq_len = max_seq_len
+        self.k_cache = None
+        self.v_cache = None
+
+    def forward(
+        self,
+        key: Float[Tensor, "batch num_heads seq head_dim"],
+        value: Float[Tensor, "batch num_heads seq head_dim"],
+    ):
+        if self.k_cache is None:
+            self.k_cache = key
+            self.v_cache = value
+        else:
+            self.k_cache = torch.cat([self.k_cache, key], dim=2)
+            self.v_cache = torch.cat([self.v_cache, value], dim=2)
+
+            if self.k_cache.shape[2] > self.max_seq_len:
+                self.k_cache = self.k_cache[:, :, -self.max_seq_len :]
+                self.v_cache = self.v_cache[:, :, -self.max_seq_len :]
+
+        return self.k_cache, self.v_cache
+
+
+class KVCacheAlloc:
+    """Pre-allocated KV Cache"""
 
     def __init__(
         self, config: TransformerConfig, device: str = None, dtype: torch.dtype = None

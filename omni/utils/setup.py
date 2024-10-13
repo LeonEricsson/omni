@@ -36,7 +36,7 @@ def validate_model_initialization(dataset, model, device, ignore_index=-1):
     assert input_ids.size(1) == attention_mask.size(1), "Sequence lengths don't match"
 
     with torch.no_grad():
-        logits = model(input_ids, attention_mask)
+        logits, _ = model(input_ids, attention_mask)
 
         batch_size, seq_len, vocab_size = logits.size()
 

@@ -42,20 +42,20 @@ llama_config = LlamaConfig(
     mlp_dropout=0.1,
     attention_bias=False,
     attention_dropout=0.1,
-    weight_tying=True,
+    weight_tying=False,
     pos_encoding_type="rope",
     mlp="mlp_swiglu",
     normalization="rmsnorm",
-    attention="gqa",
+    attention="mha",
 )
 
 training_config = {
-    "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
-    # "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
+    # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
+    "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
     "batch_size": 32,
     "learning_rate": 5e-4,
     "min_lr": 5e-5,
-    "num_epochs": 1,
+    "num_epochs": 8,
     "eval_every": 2000,
     "warmup_steps": 1000,
     "tot_steps": 1e6,
@@ -63,7 +63,7 @@ training_config = {
     "gradient_acc_steps": 4,
     "seed": 42,
     "num_workers": 4,
-    "device": "",  # auto-detect
+    "device": "cpu",  # auto-detect
     "num_devices": 1,
     "strategy": "auto",
     "precision": "16-mixed",
@@ -277,7 +277,6 @@ def main():
     fabric.launch()
     fabric.seed_everything(training_config["seed"])
 
-    checkpoint_dir = create_checkpoint_folder("llama-30M")
     setup_wandb({**llama_config.__dict__, **training_config})
 
     ### DATA ###
@@ -331,8 +330,9 @@ def main():
 
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
+    checkpoint_dir = create_checkpoint_folder("llama-30M")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-
+    exit()
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,

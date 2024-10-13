@@ -81,20 +81,21 @@ def apply_rope_real(
 
     cos_rotations, sin_rotations = rotations
 
-    def apply_rotation(real, imag, cos_rot, sin_rot, length):
-        cos_rot = cos_rot[None, None, :length, :]
-        sin_rot = sin_rot[None, None, :length, :]
+    def apply_rotation(real, imag, cos_rot, sin_rot, pos_idx):
+        cos_rot = cos_rot[None, None, pos_idx : pos_idx + 1, :]
+        sin_rot = sin_rot[None, None, pos_idx : pos_idx + 1, :]
 
         rotated_real = real * cos_rot - imag * sin_rot
         rotated_imag = real * sin_rot + imag * cos_rot
 
         return rotated_real, rotated_imag
 
+    seq_position = k.shape[2] - 1
     q_rotated_real, q_rotated_imag = apply_rotation(
-        q_real, q_imag, cos_rotations, sin_rotations, q.size(2)
+        q_real, q_imag, cos_rotations, sin_rotations, seq_position
     )
     k_rotated_real, k_rotated_imag = apply_rotation(
-        k_real, k_imag, cos_rotations, sin_rotations, k.size(2)
+        k_real, k_imag, cos_rotations, sin_rotations, seq_position
     )
 
     # interleave real/imaginary parts and reshape to original shape

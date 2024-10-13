@@ -168,7 +168,6 @@ class MHA(nn.Module):
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
         kv_cache,
-        layer_idx: Optional[int],
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -185,21 +184,25 @@ class MHA(nn.Module):
         v = v.transpose(1, 2)
 
         if kv_cache is not None:
-            k, v = kv_cache.forward(layer_idx, k, v)
+            k, v = kv_cache.forward(k, v)
 
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
         if self.flash_attn and not self.pos_encoding_type == "alibi":
+            seq_len_q, seq_len_k = q.shape[2], k.shape[2]
+            causal_mask = mask[:, :, :seq_len_q, :seq_len_k].float()
+            print(causal_mask)
+
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
                 v,
-                attn_mask=None,
+                attn_mask=causal_mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
-                is_causal=True,
             )
+
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
             if self.pos_encoding_type == "alibi":
