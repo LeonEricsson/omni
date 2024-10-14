@@ -34,9 +34,9 @@ llama_config = LlamaConfig(
     vocab_size=50258,
     seq_len=512,
     d_model=768,
-    num_heads=8,
-    num_kv_heads=4,
-    num_layers=6,
+    num_layers=12,
+    num_heads=12,
+    num_kv_heads=12,
     activation_fn="silu",
     mlp_bias=False,
     mlp_dropout=0.15,
@@ -50,17 +50,17 @@ llama_config = LlamaConfig(
 )
 
 training_config = {
-    "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
-    # "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 32,
+    # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
+    "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
+    "batch_size": 24,
     "learning_rate": 5e-4,
     "min_lr": 0.0,
-    "num_epochs": 1,
+    "num_epochs": 2,
     "eval_every": 2000,
     "warmup_steps": 1000,
     "tot_steps": 2e5,
     "gradient_clip_norm": 1.0,
-    "gradient_acc_steps": 4,
+    "gradient_acc_steps": 6,
     "seed": 42,
     "num_workers": 4,
     "device": "",  # auto-detect

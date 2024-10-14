@@ -49,8 +49,8 @@ class Transformer(nn.Module):
         mask = self.causal_mask
 
         if self.training:
-            pad_mask = pad_mask[:, None, None, :].float()
-            pad_mask = pad_mask.masked_fill(pad_mask == 0, float("-inf"))
+            pad_mask = (pad_mask - 1)[:, None, None, :].float()
+            pad_mask = pad_mask.masked_fill(pad_mask == -1, float("-inf"))
             mask = mask + pad_mask
 
         x = self.token_emb(x)
