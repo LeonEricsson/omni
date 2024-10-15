@@ -11,11 +11,6 @@ my collection of paper implementations and experiments. built to be modular, eas
 - [Llama](/omni/architectures/llama.py)
 - [GPT](/omni/architectures/gpt.py)
 
-
-### Llama 30M
-
-<img src="/experiments/basic/assets/train_loss.png" alt="Train Loss" width="300">
-
 ### todo
 
 - [ ] Differential Transformer
