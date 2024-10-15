@@ -1,4 +1,5 @@
 from typing import List
+
 import torch.nn as nn
 from jaxtyping import Float, Int
 from torch import Tensor
@@ -10,7 +11,6 @@ from omni.modules.config import TransformerConfig
 from omni.modules.norm import NORM_MAP
 from omni.modules.pos_embeddings import PositionalEmbedding
 
-import torch
 
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
@@ -37,7 +37,7 @@ class Transformer(nn.Module):
     def get_kv_cache_layer(self, kv_cache, layer_idx):
         if not kv_cache:
             return None
-        
+
         return kv_cache[layer_idx]
 
     def forward(
@@ -49,9 +49,9 @@ class Transformer(nn.Module):
         mask = self.causal_mask
 
         if self.training:
-            pad_mask = pad_mask[:, None, None, :].float() 
-            pad_mask = pad_mask.masked_fill(pad_mask == 0, float('-inf')) 
-            mask += pad_mask 
+            pad_mask = (pad_mask - 1)[:, None, None, :].float()
+            pad_mask = pad_mask.masked_fill(pad_mask == -1, float("-inf"))
+            mask = mask + pad_mask
 
         x = self.token_emb(x)
 

@@ -4,7 +4,8 @@ my collection of paper implementations and experiments. built to be modular, eas
 
 ### papers
 
-- [Multi-head Latent Attention](/experiments/mla)
+- [Multi-head Latent Attention](/experiments/mla/mla.py)
+- [Differential Transformer](/experiments/differential_transformer/diff_attention.py)
 - [Rotary Embeddings](/omni/modules/pos_embeddings.py#L59)
 - [Attention with Linear Biases](/omni/modules/pos_embeddings.py#L176)
 - [Llama](/omni/architectures/llama.py)
@@ -17,13 +18,8 @@ my collection of paper implementations and experiments. built to be modular, eas
 
 ### todo
 
-- [x] KV Cache
 - [ ] Differential Transformer
 - [ ] MLA
-  - [x] KV Cache
-  - [ ] Training run
-  - [ ] Verify KV Cache reduction
-- [x] Inference engine
 
 ### todo sides
 - [ ] Swap config structure to importing modules instead
