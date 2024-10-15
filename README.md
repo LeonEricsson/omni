@@ -11,9 +11,12 @@ my collection of paper implementations and experiments. built to be modular, eas
 - [GPT](/omni/architectures/gpt.py)
 
 
+### Llama 30M
+
+<img src="/experiments/basic/assets/train_loss.png" alt="Train Loss" width="300">
+
 ### todo
 
-- [ ] Train 20M small model on >1B tokens
 - [x] KV Cache
 - [ ] Differential Transformer
 - [ ] MLA
