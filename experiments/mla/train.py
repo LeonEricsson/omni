@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from datasets import load_from_disk
 from jaxtyping import Float, Int
 from logger import TrainingLogger
+from mla_transformer import MLAConfig, MLATransformer
 from torch.utils.data import DataLoader
 
 import wandb
@@ -25,18 +26,15 @@ from omni.utils.setup import (
     validate_model_initialization,
 )
 from omni.utils.system import auto_device
-from mla_transformer import MLAConfig, MLATransformer
 
 torch.set_float32_matmul_precision(precision="high")
 
 mla_config = MLAConfig(
     vocab_size=50258,
     seq_len=512,
-    d_model=256,
-    head_dim=64,
-    head_dim_decoupled_qk=32,
+    d_model=768,
+    num_layers=8,
     num_heads=8,
-    num_layers=4,
     activation_fn="silu",
     mlp_bias=False,
     mlp_dropout=0.1,
@@ -48,9 +46,9 @@ mla_config = MLAConfig(
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 1,
+    "batch_size": 20,
     "learning_rate": 5e-4,
-    "min_lr": 5e-5,
+    "min_lr": 5e-6,
     "num_epochs": 2,
     "eval_every": 2000,
     "warmup_steps": 1000,
@@ -71,7 +69,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
         project="MLA",
         config=config,
         notes="Training MLA transformer",
-        mode="disabled",
+        mode="online",
     )
 
 
@@ -248,10 +246,14 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
     with open(metadata_path, "r") as f:
         return json.load(f)
 
-def save_checkpoint(checkpoint_dir: str, filename: str, model: nn.Module, fabric: L.Fabric):
+
+def save_checkpoint(
+    checkpoint_dir: str, filename: str, model: nn.Module, fabric: L.Fabric
+):
     checkpoint_path = os.path.join(checkpoint_dir, filename)
     state = {"model": model}
     fabric.save(checkpoint_path, state)
+
 
 def main():
     cli_args = parse_args(training_config)
@@ -323,7 +325,7 @@ def main():
 
     checkpoint_dir = create_checkpoint_folder("MLA")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
-    
+
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,
@@ -336,7 +338,7 @@ def main():
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
-    )    
+    )
 
     save_checkpoint(checkpoint_dir, "final.ckpt", model, fabric)
 

@@ -1,14 +1,13 @@
 from typing import Literal, Tuple, TypeAlias, get_args
 
-import torch.nn as nn
 import torch
+import torch.nn as nn
+from jaxtyping import Float, Int
 from torch import Tensor
-from jaxtyping import Float
-from jaxtyping import Int
-
 
 MHATensor: TypeAlias = Float[Tensor, "batch heads seq head_dim"]
 RotationTensor: TypeAlias = Float[Tensor, "seq dim_half"]
+
 
 def precompute_freqs_cis_real(
     head_dim: Int, max_seq_length: Int, theta: Float = 10000.0
@@ -67,12 +66,12 @@ def apply_rope_real(
     def apply_rotation(real, imag, cos_rot, sin_rot, length):
         cos_rot = cos_rot[None, None, :length, :]
         sin_rot = sin_rot[None, None, :length, :]
-        
+
         rotated_real = real * cos_rot - imag * sin_rot
         rotated_imag = real * sin_rot + imag * cos_rot
-        
+
         return rotated_real, rotated_imag
-    
+
     q_rotated_real, q_rotated_imag = apply_rotation(
         q_real, q_imag, cos_rotations, sin_rotations, q.size(2)
     )
@@ -81,12 +80,8 @@ def apply_rope_real(
     )
 
     # interleave real/imaginary parts and reshape to original shape
-    rotated_q = torch.stack((q_rotated_real, q_rotated_imag), dim=4).view(
-        q.size()
-    )
-    rotated_k = torch.stack((k_rotated_real, k_rotated_imag), dim=4).view(
-        k.size()
-    )
+    rotated_q = torch.stack((q_rotated_real, q_rotated_imag), dim=4).view(q.size())
+    rotated_k = torch.stack((k_rotated_real, k_rotated_imag), dim=4).view(k.size())
 
     return rotated_q.type_as(q), rotated_k.type_as(k)
 
@@ -99,14 +94,23 @@ class MLAPositionalEmbedding(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+
+        head_dim_decoupled_qk = config.head_dim_decoupled_qk
+        if head_dim_decoupled_qk is None:
+            head_dim = config.head_dim
+
+            if head_dim is None:
+                head_dim = 3 * config.d_model // config.num_heads
+
+            head_dim_decoupled_qk = head_dim // 2
+
         cos_rotations, sin_rotations = precompute_freqs_cis_real(
-            config.head_dim_decoupled_qk,
+            head_dim_decoupled_qk,
             config.seq_len,
             config.rope_theta,
         )
         self.register_buffer("cos_rotations", cos_rotations)
         self.register_buffer("sin_rotations", sin_rotations)
-
 
     def forward(self, x: Float[Tensor, "batch seq d_model"]):
         pos_info = (self.cos_rotations, self.sin_rotations)

@@ -29,18 +29,23 @@ class DifferentialAttention(nn.Module):
             - "Differential Attention": https://arxiv.org/abs/2410.05258
         """
         super().__init__()
-        assert config.d_model % config.num_heads == 0
-        assert config.num_heads % config.num_kv_heads == 0
-
-        self.head_dim = config.head_dim
         self.n_heads = config.num_heads
         self.n_kv_heads = config.num_kv_heads
-        self.kv_groups = self.n_heads // self.n_kv_heads
+        self.head_dim = config.head_dim
+
+        if self.n_heads is None:
+            assert self.head_dim is not None
+            self.n_heads = config.d_model // (2 * self.head_dim)
+            self.n_kv_heads = self.n_heads
 
         if self.head_dim is None:
             self.head_dim = config.d_model // (2 * self.n_heads)
 
-        assert config.num_heads * 2 * config.head_dim == config.d_model
+        assert config.d_model % self.n_heads == 0
+        assert self.n_heads % self.n_kv_heads == 0
+        assert self.n_heads * 2 * self.head_dim == config.d_model
+
+        self.kv_groups = self.n_heads // self.n_kv_heads
 
         self.scale = self.head_dim**-0.5
 
@@ -59,7 +64,7 @@ class DifferentialAttention(nn.Module):
         self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.attention_bias)
 
         self.group_norms = nn.ModuleList(
-            [LayerNorm(dim=2 * self.head_dim) for _ in range(config.num_heads)]
+            [LayerNorm(dim=2 * self.head_dim) for _ in range(self.n_heads)]
         )
 
         self.register_buffer(
@@ -129,7 +134,7 @@ class DifferentialAttention(nn.Module):
         # to support single step inference
         start = k.shape[2] - q.shape[2]
         end = k.shape[2]
-        mask = mask[:, :, start:end, :k.shape[2]]
+        mask = mask[:, :, start:end, : k.shape[2]]
 
         if self.flash_attn:
             A1 = self.flash_attention(q1, k1, v, mask)

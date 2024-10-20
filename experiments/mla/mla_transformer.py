@@ -21,8 +21,8 @@ class MLAConfig:
     d_model: Int
     num_heads: Int
     num_layers: Int
-    head_dim: Int
-    head_dim_decoupled_qk: Int
+    head_dim: Int = None
+    head_dim_decoupled_qk: Int = None
     hidden_dim: Int = None
 
     # components
@@ -100,7 +100,9 @@ class MLATransformer(nn.Module):
         mask = self.causal_mask
 
         if self.training:
-            mask = mask & pad_mask[:, None, None, :]
+            pad_mask = (pad_mask - 1)[:, None, None, :].float()
+            pad_mask = pad_mask.masked_fill(pad_mask == -1, float("-inf"))
+            mask = mask + pad_mask
 
         x = self.token_emb(x)
 
