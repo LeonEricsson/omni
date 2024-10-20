@@ -1,5 +1,5 @@
-from typing import List
 from dataclasses import dataclass
+from typing import List
 
 import torch.nn as nn
 from diff_attention import DifferentialAttention
@@ -93,7 +93,7 @@ class DiffTransformer(nn.Module):
     def get_kv_cache_layer(self, kv_cache, layer_idx):
         if not kv_cache:
             return None
-        
+
         return kv_cache[layer_idx]
 
     def forward(
@@ -105,7 +105,9 @@ class DiffTransformer(nn.Module):
         mask = self.causal_mask
 
         if self.training:
-            mask = mask & pad_mask[:, None, None, :]
+            pad_mask = (pad_mask - 1)[:, None, None, :].float()
+            pad_mask = pad_mask.masked_fill(pad_mask == -1, float("-inf"))
+            mask = mask + pad_mask
 
         x = self.token_emb(x)
 
