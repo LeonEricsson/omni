@@ -11,7 +11,6 @@ my collection of paper implementations and experiments. built to be modular, eas
 - [Llama](/omni/architectures/llama.py)
 - [GPT](/omni/architectures/gpt.py)
 
-
 ### todo
 
 - [ ] Differential Transformer
