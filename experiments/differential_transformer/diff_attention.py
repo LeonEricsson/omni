@@ -112,7 +112,8 @@ class DifferentialAttention(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        # KV CACHE
+        if kv_cache is not None:
+            k, v = kv_cache.forward(k, v)
 
         k = torch.repeat_interleave(k, self.kv_groups, dim=1)
         v = torch.repeat_interleave(v, self.kv_groups, dim=1)

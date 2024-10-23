@@ -13,7 +13,5 @@ my collection of paper implementations and experiments. built to be modular, eas
 
 ### todo
 
-- [ ] Differential Transformer
-
-### todo sides
+### todo sidequests
 - [ ] Swap config structure to importing modules instead
