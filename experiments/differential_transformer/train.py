@@ -181,6 +181,7 @@ def train(
                         )
                         / gradient_acc_steps
                     )
+                    # .backward() accumulates when .zero_grad() isn't called
                     fabric.backward(loss)
 
                 # gradient accumulation
