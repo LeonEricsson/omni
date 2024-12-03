@@ -1,5 +1,9 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from jaxtyping import Float
+from torch import Tensor
 
 from omni.modules.activations import ACT2FN
 
@@ -33,8 +37,20 @@ class MLPSwiGLU(nn.Module):
             nn.Dropout(config.mlp_dropout) if config.mlp_dropout else lambda x: x
         )
 
-    def forward(self, x):
-        x = self.up(x) * F.silu(self.gate(x))  # SwiGLU
-        x = self.down(x)
-        x = self.dropout(x)
-        return x
+        self.s_u = nn.Parameter(torch.ones(config.d_model))
+        self.s_v = nn.Parameter(torch.ones(config.d_model))
+        
+        self.register_buffer("s_u_scale", config.d_model ** -0.5)
+
+    def forward(self, x: Float[Tensor, "batch seq d_model"]):
+        u = self.up(x)              
+        v = self.gate(x)            
+
+        u = u * self.s_u
+        v = v * (self.s_v * self.s_u_scale)
+
+        x_mlp = u * F.silu(v) # SwiGLU
+        
+        x_mlp = self.dropout(self.down(x_mlp))
+
+        return x_mlp

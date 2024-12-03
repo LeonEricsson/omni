@@ -59,6 +59,7 @@ class nGQA(nn.Module):
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
         self.s_qk = nn.Parameter(torch.ones(1, self.num_heads, 1, self.head_dim))
+        self.register_buffer("s_qk_scale", config.d_model**-0.5)
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -84,9 +85,10 @@ class nGQA(nn.Module):
         q = q.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-
-        q = self.norm(q) * self.s_qk
-        k = self.norm(k) * self.s_qk[:, :: self.kv_groups]
+        
+        s_qk = self.s_qk * self.s_qk_scale
+        q = self.norm(q) * s_qk
+        k = self.norm(k) * s_qk[:, :: self.kv_groups]
 
         if kv_cache is not None:
             k, v = kv_cache.forward(k, v)
@@ -160,6 +162,7 @@ class nMHA(nn.Module):
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
         self.s_qk = nn.Parameter(torch.ones(1, self.n_heads, 1, self.head_dim))
+        self.register_buffer("s_qk_scale", config.d_model**-0.5)
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -190,8 +193,9 @@ class nMHA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        q = self.norm(q) * self.s_qk
-        k = self.norm(k) * self.s_qk
+        s_qk = self.s_qk * self.s_qk_scale
+        q = self.norm(q) * s_qk
+        k = self.norm(k) * s_qk
 
         if kv_cache is not None:
             k, v = kv_cache.forward(k, v)

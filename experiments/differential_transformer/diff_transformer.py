@@ -42,7 +42,7 @@ class DiffConfig:
 
 
 class DiffBlock(nn.Module):
-    def __init__(self, config: TransformerConfig, layer_idx: int):
+    def __init__(self, config: DiffConfig, layer_idx: int):
         super().__init__()
 
         self.attn = DifferentialAttention(config, layer_idx)
@@ -71,7 +71,7 @@ class DiffBlock(nn.Module):
 
 
 class DiffTransformer(nn.Module):
-    def __init__(self, config: TransformerConfig, *args, **kwargs):
+    def __init__(self, config: DiffConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.token_emb = nn.Embedding(config.vocab_size, config.d_model)
 
