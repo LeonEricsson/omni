@@ -1,28 +1,21 @@
-from typing import Literal, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Complex, Float, Int
+from jaxtyping import Complex, Float
 from torch import Tensor
 
 from omni.modules.pos_embeddings import apply_rope_real
-
-AttentionType = Literal["mha", "gqa"]
-
 
 def causal_attention_mask(sequence_length: int, dtype=torch.float32):
     mask = torch.triu(torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype), diagonal=1)
     mask = mask.masked_fill(mask == 1, float("-inf")) 
     return mask
 
-
-class GQA(nn.Module):
+class nGQA(nn.Module):
     """
-    Grouped Query Attention (GQA) module that reduces key/value heads while maintaining query heads.
-    GQA generalizes Multi-Head Attention by allowing fewer key/value heads than query heads,
-    where each key/value head is shared across multiple query heads. GQA is equivalent to
-    MHA when num_kv_heads == num_heads. GQA is equivalent to MQA when num_kv_heads == 1.
+    Normalized Grouped Query Attention.
 
     Args:
     config: Configuration containing:
@@ -43,7 +36,7 @@ class GQA(nn.Module):
         self.num_kv_heads = config.num_kv_heads
         self.kv_groups = self.num_heads // self.num_kv_heads
         self.head_dim = config.d_model // config.num_heads
-        self.scale = self.head_dim**-0.5
+        self.scale = self.head_dim**0.5
 
         self.W_Q = nn.Linear(
             config.d_model,
@@ -64,6 +57,10 @@ class GQA(nn.Module):
 
         self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.res_dropout = nn.Dropout(config.attention_dropout)
+
+        self.s_qk = nn.Parameter(torch.ones(1, self.num_heads, 1, self.head_dim))
+
+        self.norm = lambda x: F.normalize(x, dim=-1)
 
         self.flash_attn: bool = hasattr(
             torch.nn.functional, "scaled_dot_product_attention"
@@ -88,6 +85,9 @@ class GQA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
+        q = self.norm(q) * self.s_qk
+        k = self.norm(k) * self.s_qk[:, :: self.kv_groups]
+
         if kv_cache is not None:
             k, v = kv_cache.forward(k, v)
 
@@ -110,6 +110,7 @@ class GQA(nn.Module):
                 v,
                 attn_mask=mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
+                scale=self.scale
             )
         else:
             qk = (q @ k.transpose(2, 3)) * self.scale  # (batch, n_heads, seq, seq)
@@ -126,12 +127,12 @@ class GQA(nn.Module):
         output = self.res_dropout(output)
 
         return output
+    
 
-
-class MHA(nn.Module):
+class nMHA(nn.Module):
     def __init__(self, config):
         """
-        Multi-Head Attention implementing scaled dot-product attention.
+        Normalized Multi-Head Attention implementing scaled dot-product attention.
 
         Args:
         config (TransformerConfig): Configuration dataclass containing:
@@ -146,17 +147,21 @@ class MHA(nn.Module):
 
         self.n_heads = config.num_heads
         self.head_dim = config.d_model // config.num_heads
-        self.scale = self.head_dim**-0.5
+        self.scale = self.head_dim**0.5
 
         self.W_QKV = nn.Linear(
             config.d_model,
-            self.head_dim * config.num_heads * 3,
+            self.head_dim * self.n_heads * 3,
             bias=config.attention_bias,
         )
         self.W_O = nn.Linear(config.d_model, config.d_model, bias=config.attention_bias)
 
         self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.res_dropout = nn.Dropout(config.attention_dropout)
+
+        self.s_qk = nn.Parameter(torch.ones(1, self.n_heads, 1, self.head_dim))
+
+        self.norm = lambda x: F.normalize(x, dim=-1)
 
         self.flash_attn: bool = hasattr(
             torch.nn.functional, "scaled_dot_product_attention"
@@ -185,6 +190,9 @@ class MHA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
+        q = self.norm(q) * self.s_qk
+        k = self.norm(k) * self.s_qk
+
         if kv_cache is not None:
             k, v = kv_cache.forward(k, v)
 
@@ -204,6 +212,7 @@ class MHA(nn.Module):
                 v,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 attn_mask=mask
+                scale=self.scale
             )
 
         else:
@@ -225,9 +234,3 @@ class MHA(nn.Module):
         output = self.res_dropout(output)
 
         return output
-
-
-ATTN_MAP = {
-    "mha": MHA,
-    "gqa": GQA,
-}

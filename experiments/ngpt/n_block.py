@@ -1,4 +1,6 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
@@ -7,15 +9,17 @@ from omni.modules.config import TransformerConfig
 from omni.modules.mlp import MLP_MAP
 from omni.modules.norm import NORM_MAP
 
-
-class Block(nn.Module):
+class nBlock(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
 
         self.attn = ATTN_MAP[config.attention](config)
         self.mlp = MLP_MAP[config.mlp](config)
-        self.norm1 = NORM_MAP[config.normalization](config)
-        self.norm2 = NORM_MAP[config.normalization](config)
+
+        self.alpha_A = nn.Parameter(torch.full((config.d_model,), 5e-2))
+        self.alpha_M = nn.Parameter(torch.full((config.d_model,), 5e-2))
+
+        self.norm = lambda x: F.normalize(x, dim=-1)
 
     def forward(
         self,
@@ -24,14 +28,10 @@ class Block(nn.Module):
         pos_info,
         kv_cache,
     ):
-        """Pre-norm Transformer block."""
+        x_A = self.norm(self.attn(x, mask, pos_info, kv_cache))
+        x = self.norm(x + self.alpha_A * (x_A - x)) # eq. 10
 
-        # Self-attention block
-        attn_out = self.attn(self.norm1(x), mask, pos_info, kv_cache)
-        x = x + attn_out  # add to residual stream
-
-        # MLP block
-        mlp_out = self.mlp(self.norm2(x))
-        x = x + mlp_out  # add to residual stream
+        x_M = self.norm(self.mlp(x))
+        x = self.norm(x + self.alpha_M * (x_M - x)) # eq. 11
 
         return x
