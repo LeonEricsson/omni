@@ -7,6 +7,7 @@ import json
 import os
 import time
 from typing import Any, Dict
+import wandb
 
 import lightning as L
 import torch
@@ -17,9 +18,7 @@ from jaxtyping import Float, Int
 from logger import TrainingLogger
 from torch.utils.data import DataLoader
 
-import wandb
-from omni.architectures.llama import LlamaConfig
-from omni.modules.transformer import Transformer
+from n_transformer import nTransformer, nConfig
 from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.setup import (
     create_checkpoint_folder,
@@ -30,29 +29,24 @@ from omni.utils.system import auto_device
 
 torch.set_float32_matmul_precision(precision="high")
 
-model_config = LlamaConfig(
+model_config = nConfig(
     vocab_size=50258,
     seq_len=512,
     d_model=768,
     num_layers=8,
     num_heads=8,
-    num_kv_heads=4,
-    activation_fn="silu",
+    num_kv_heads=8,
     mlp_bias=False,
     mlp_dropout=0.1,
     attention_bias=False,
     attention_dropout=0.1,
     weight_tying=False,
-    pos_encoding_type="rope",
-    mlp="mlp_swiglu",
-    normalization="rmsnorm",
-    attention="gqa",
 )
 
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 32,
+    "batch_size": 1,
     "learning_rate": 5e-4,
     "min_lr": 5e-6,
     "num_epochs": 2,
@@ -72,11 +66,9 @@ training_config = {
 
 def setup_wandb(config: Dict[str, Any]) -> None:
     wandb.init(
-        project="Llama",
+        project="nGPT",
         config=config,
-        notes="LLaMA architecture training on TinyStories",
-        tags=["llama", "tinystories", "pre-training"],
-        mode="online",
+        mode="disabled",
     )
 
 
@@ -307,7 +299,7 @@ def main():
     val_dataloader = init_dataloader(val_dataset)
 
     ### MODEL ###
-    model = Transformer(model_config)
+    model = nTransformer(model_config)
     if device.type == "cuda":
         model = torch.compile(model, fullgraph=True)
 
@@ -331,7 +323,7 @@ def main():
 
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
-    checkpoint_dir = create_checkpoint_folder("llama-30M")
+    checkpoint_dir = create_checkpoint_folder("nGPT")
     save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
     model = train(
         fabric=fabric,

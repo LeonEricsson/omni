@@ -192,10 +192,11 @@ class PositionalEmbedding(nn.Module):
                 _create_absolute_positions(config.d_model, config.seq_len),
             )
         elif self.type == "rope":
-            head_dim = config.head_dim
-            if config.head_dim is None:
+            if not hasattr(config, "head_dim"):
                 head_dim = config.d_model // config.num_heads
-
+            else:
+                head_dim = config.head_dim
+                
             cos_rotations, sin_rotations = precompute_freqs_cis_real(
                 head_dim,
                 config.seq_len,

@@ -8,19 +8,13 @@ from jaxtyping import Float, Int, Bool
 from torch import Tensor
 
 from n_attention import nMHA, nGQA, causal_attention_mask
-from n_mlp import nMLP
+from n_mlp import nMLPSwiGLU
 
 from omni.modules.cache import KVCache
-from omni.modules.config import TransformerConfig
 from omni.modules.pos_embeddings import PositionalEmbedding
-
-from omni.modules.activations import ActivationFunction
 from omni.modules.attention import causal_attention_mask
 from omni.modules.cache import KVCache
-from omni.modules.config import TransformerConfig
-from omni.modules.mlp import MLP_MAP, MLPType
-from omni.modules.norm import NORM_MAP, NormalizationType
-from omni.modules.pos_embeddings import PositionalEmbedding, PositionEmbeddingScheme
+from omni.modules.pos_embeddings import PositionalEmbedding
 
 @dataclass
 class nConfig:
@@ -32,7 +26,8 @@ class nConfig:
     num_layers: Int
     hidden_dim: Int = None
 
-    head_dim: Int = None
+    pos_encoding_type = "rope"
+
     mlp_bias: Bool = True
     mlp_dropout: Optional[Float] = None
     attention_bias: Bool = True
@@ -54,8 +49,8 @@ class nTransformer(nn.Module):
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        self.s_z = nn.Parameter(torch.ones(1, config.d_model))
-        self.register_buffer("s_z_scale", config.d_model ** -0.5)
+        self.s_z = nn.Parameter(torch.ones(config.vocab_size))
+        self.register_buffer("s_z_scale", torch.tensor(config.d_model**-0.5))
 
         if config.weight_tying:
             self.vocab_proj.weight = self.token_emb.weight
@@ -102,12 +97,12 @@ class nBlock(nn.Module):
         super().__init__()
 
         self.attn = nMHA(config)
-        self.mlp = nMLP(config)
+        self.mlp = nMLPSwiGLU(config)
 
         self.alpha_A = nn.Parameter(torch.full((config.d_model,), config.alpha_init))
         self.alpha_M = nn.Parameter(torch.full((config.d_model,), config.alpha_init))
 
-        self.register_buffer("alpha_scale", config.d_model ** -0.5)
+        self.register_buffer("alpha_scale", torch.tensor(config.d_model**-0.5))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 

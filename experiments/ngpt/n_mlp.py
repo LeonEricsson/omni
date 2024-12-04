@@ -5,9 +5,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-from omni.modules.activations import ACT2FN
-
-class MLPSwiGLU(nn.Module):
+class nMLPSwiGLU(nn.Module):
     def __init__(self, config):
         """
         SwiGLU Feed Forward Network - Transformer specific (2 layers, 1 of which is gated).
@@ -37,10 +35,10 @@ class MLPSwiGLU(nn.Module):
             nn.Dropout(config.mlp_dropout) if config.mlp_dropout else lambda x: x
         )
 
-        self.s_u = nn.Parameter(torch.ones(config.d_model))
-        self.s_v = nn.Parameter(torch.ones(config.d_model))
+        self.s_u = nn.Parameter(torch.ones(hidden_dim))
+        self.s_v = nn.Parameter(torch.ones(hidden_dim))
         
-        self.register_buffer("s_u_scale", config.d_model ** -0.5)
+        self.register_buffer("s_u_scale", torch.tensor(config.d_model**-0.5))
 
     def forward(self, x: Float[Tensor, "batch seq d_model"]):
         u = self.up(x)              

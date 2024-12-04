@@ -59,7 +59,7 @@ class nGQA(nn.Module):
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
         self.s_qk = nn.Parameter(torch.ones(1, self.num_heads, 1, self.head_dim))
-        self.register_buffer("s_qk_scale", config.d_model**-0.5)
+        self.register_buffer("s_qk_scale", torch.tensor(config.d_model**-0.5))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -162,7 +162,7 @@ class nMHA(nn.Module):
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
         self.s_qk = nn.Parameter(torch.ones(1, self.n_heads, 1, self.head_dim))
-        self.register_buffer("s_qk_scale", config.d_model**-0.5)
+        self.register_buffer("s_qk_scale", torch.tensor(config.d_model**-0.5))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -215,7 +215,7 @@ class nMHA(nn.Module):
                 k,
                 v,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
-                attn_mask=mask
+                attn_mask=mask,
                 scale=self.scale
             )
 
