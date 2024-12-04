@@ -17,9 +17,9 @@ from datasets import load_from_disk
 from jaxtyping import Float, Int
 from logger import TrainingLogger
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from n_transformer import nTransformer, nConfig
-from omni.utils.lr_schedule import CosineWarmupScheduler
 from omni.utils.setup import (
     create_checkpoint_folder,
     parse_args,
@@ -48,7 +48,7 @@ training_config = {
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
     "batch_size": 1,
     "learning_rate": 5e-4,
-    "min_lr": 5e-6,
+    "min_lr": 0.0,
     "num_epochs": 2,
     "eval_every": 2000,
     "warmup_steps": 1000,
@@ -307,14 +307,10 @@ def main():
         model.parameters(),
         lr=training_config["learning_rate"],
         betas=(0.9, 0.95),
-        weight_decay=0.1,
+        weight_decay=0.0,
     )
-    scheduler = CosineWarmupScheduler(
-        optimizer,
-        warmup_steps=training_config["warmup_steps"],
-        total_steps=training_config["tot_steps"],
-        min_lr=training_config["min_lr"],
-    )
+
+    scheduler = CosineAnnealingLR(optimizer, T_max=training_config["tot_steps"], eta_min=training_config["min_lr"])
 
     model, optimizer = fabric.setup(model, optimizer)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(

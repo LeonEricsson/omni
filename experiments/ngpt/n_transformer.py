@@ -16,6 +16,7 @@ from omni.modules.attention import causal_attention_mask
 from omni.modules.cache import KVCache
 from omni.modules.pos_embeddings import PositionalEmbedding
 
+##TODO: NORMALIZE WEIGHT MATRICES 2.6 Step 2 in paper
 @dataclass
 class nConfig:
     vocab_size: Int
@@ -35,7 +36,7 @@ class nConfig:
     weight_tying: Bool = False
     rope_theta: Float = 10000.0
 
-    alpha_init: Float = 5e-2
+    alpha_init: Float = 0.125 # on order 1 / num_layers
 
 class nTransformer(nn.Module):
     def __init__(self, config: nConfig, *args, **kwargs):
