@@ -4,19 +4,15 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Float, Int, Bool
+from jaxtyping import Bool, Float, Int
+from n_attention import causal_attention_mask, nGQA, nMHA
+from n_mlp import nMLPSwiGLU
 from torch import Tensor
 
-from n_attention import nMHA, nGQA, causal_attention_mask
-from n_mlp import nMLPSwiGLU
-
-from omni.modules.cache import KVCache
-from omni.modules.pos_embeddings import PositionalEmbedding
-from omni.modules.attention import causal_attention_mask
 from omni.modules.cache import KVCache
 from omni.modules.pos_embeddings import PositionalEmbedding
 
-##TODO: NORMALIZE WEIGHT MATRICES 2.6 Step 2 in paper
+
 @dataclass
 class nConfig:
     vocab_size: Int
@@ -36,7 +32,8 @@ class nConfig:
     weight_tying: Bool = False
     rope_theta: Float = 10000.0
 
-    alpha_init: Float = 0.125 # on order 1 / num_layers
+    alpha_init: Float = 0.125  # on order 1 / num_layers
+
 
 class nTransformer(nn.Module):
     def __init__(self, config: nConfig, *args, **kwargs):
@@ -66,6 +63,14 @@ class nTransformer(nn.Module):
             return None
 
         return kv_cache[layer_idx]
+
+    @torch.no_grad()
+    def normalize_weights(self):
+        self.token_emb.weight.data = F.normalize(self.token_emb.weight.data, dim=-1)
+        self.vocab_proj.weight.data = F.normalize(self.vocab_proj.weight.data, dim=-1)
+
+        for block in self.blocks:
+            block.normalize_weights()
 
     def forward(
         self,
@@ -118,9 +123,9 @@ class nBlock(nn.Module):
         alpha_M = self.alpha_M * self.alpha_scale
 
         x_A = self.norm(self.attn(x, mask, pos_info, kv_cache))
-        x = self.norm(x + alpha_A * (x_A - x)) # eq. 10
+        x = self.norm(x + alpha_A * (x_A - x))  # eq. 10
 
         x_M = self.norm(self.mlp(x))
-        x = self.norm(x + alpha_M * (x_M - x)) # eq. 11
+        x = self.norm(x + alpha_M * (x_M - x))  # eq. 11
 
         return x
