@@ -26,7 +26,7 @@ from omni.utils.setup import (
     parse_args,
     validate_model_initialization,
 )
-from omni.utils.system import auto_device
+from omni.utils.system import auto_device, num_params
 
 torch.set_float32_matmul_precision(precision="high")
 
@@ -310,6 +310,8 @@ def main():
     model = Transformer(model_config)
     if device.type == "cuda":
         model = torch.compile(model, fullgraph=True)
+
+    num_params(model)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),

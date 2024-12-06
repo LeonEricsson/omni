@@ -54,3 +54,16 @@ def get_system_stats():
         "cpu_percent": psutil.cpu_percent(),
         "memory_percent": psutil.virtual_memory().percent,
     }
+
+
+def num_params(model, include_embeddings: bool = False):
+    num_trainable_params = sum(
+        p.numel()
+        for name, p in model.named_parameters()
+        if p.requires_grad
+        and (
+            include_embeddings
+            or not any(kw in name for kw in ["token_emb", "vocab_proj"])
+        )
+    )
+    print(f"Number of trainable parameters: {num_trainable_params:,}")

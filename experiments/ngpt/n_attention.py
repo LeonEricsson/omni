@@ -8,10 +8,14 @@ from torch import Tensor
 
 from omni.modules.pos_embeddings import apply_rope_real
 
+
 def causal_attention_mask(sequence_length: int, dtype=torch.float32):
-    mask = torch.triu(torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype), diagonal=1)
-    mask = mask.masked_fill(mask == 1, float("-inf")) 
+    mask = torch.triu(
+        torch.ones((1, 1, sequence_length, sequence_length), dtype=dtype), diagonal=1
+    )
+    mask = mask.masked_fill(mask == 1, float("-inf"))
     return mask
+
 
 class nGQA(nn.Module):
     """
@@ -58,8 +62,13 @@ class nGQA(nn.Module):
         self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
-        self.s_qk = nn.Parameter(torch.ones(1, self.num_heads, 1, self.head_dim))
-        self.register_buffer("s_qk_scale", torch.tensor(config.d_model**-0.5))
+        s_qk_init = 1.0
+        s_qk_scale = config.d_model**-0.5
+        self.s_qk = nn.Parameter(
+            s_qk_scale * torch.ones(config.d_model, dtype=torch.float32)
+        )
+        self.register_buffer("s_qk_init", torch.tensor(s_qk_init))
+        self.register_buffer("s_qk_scale", torch.tensor(s_qk_scale))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -68,6 +77,11 @@ class nGQA(nn.Module):
         )
 
         self.pos_encoding_type = config.pos_encoding_type
+
+    def normalize_weights(self):
+        self.W_Q.weight.data = F.normalize(self.W_Q.weight.data, dim=-1)
+        self.W_KV.weight.data = F.normalize(self.W_KV.weight.data, dim=-1)
+        self.W_O.weight.data = F.normalize(self.W_O.weight.data, dim=-1)
 
     def forward(
         self,
@@ -85,8 +99,10 @@ class nGQA(nn.Module):
         q = q.transpose(1, 2)  # (batch, n_heads, seq, head_dim)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        
-        s_qk = self.s_qk * self.s_qk_scale
+
+        s_qk = (self.s_qk * (self.s_qk_init / self.s_qk_scale)).view(
+            1, self.n_heads, 1, self.head_dim
+        )
         q = self.norm(q) * s_qk
         k = self.norm(k) * s_qk[:, :: self.kv_groups]
 
@@ -103,7 +119,7 @@ class nGQA(nn.Module):
         # to support single step inference
         start = k.shape[2] - q.shape[2]
         end = k.shape[2]
-        mask = mask[:, :, start:end, :k.shape[2]].to(q.dtype)
+        mask = mask[:, :, start:end, : k.shape[2]].to(q.dtype)
 
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
@@ -112,7 +128,7 @@ class nGQA(nn.Module):
                 v,
                 attn_mask=mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
-                scale=self.scale
+                scale=self.scale,
             )
         else:
             qk = (q @ k.transpose(2, 3)) * self.scale  # (batch, n_heads, seq, seq)
@@ -129,7 +145,7 @@ class nGQA(nn.Module):
         output = self.res_dropout(output)
 
         return output
-    
+
 
 class nMHA(nn.Module):
     def __init__(self, config):
@@ -161,8 +177,13 @@ class nMHA(nn.Module):
         self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.res_dropout = nn.Dropout(config.attention_dropout)
 
-        self.s_qk = nn.Parameter(torch.ones(1, self.n_heads, 1, self.head_dim))
-        self.register_buffer("s_qk_scale", torch.tensor(config.d_model**-0.5))
+        s_qk_init = 1.0
+        s_qk_scale = config.d_model**-0.5
+        self.s_qk = nn.Parameter(
+            s_qk_scale * torch.ones(config.d_model, dtype=torch.float32)
+        )
+        self.register_buffer("s_qk_init", torch.tensor(s_qk_init))
+        self.register_buffer("s_qk_scale", torch.tensor(s_qk_scale))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
 
@@ -171,6 +192,10 @@ class nMHA(nn.Module):
         )
 
         self.pos_encoding_type = config.pos_encoding_type
+
+    def normalize_weights(self):
+        self.W_QKV.weight.data = F.normalize(self.W_QKV.weight.data, dim=-1)
+        self.W_O.weight.data = F.normalize(self.W_O.weight.data, dim=-1)
 
     def forward(
         self,
@@ -193,7 +218,9 @@ class nMHA(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        s_qk = self.s_qk * self.s_qk_scale
+        s_qk = (self.s_qk * (self.s_qk_init / self.s_qk_scale)).view(
+            1, self.n_heads, 1, self.head_dim
+        )
         q = self.norm(q) * s_qk
         k = self.norm(k) * s_qk
 
@@ -207,7 +234,7 @@ class nMHA(nn.Module):
         # to support single step inference
         start = k.shape[2] - q.shape[2]
         end = k.shape[2]
-        mask = mask[:, :, start:end, :k.shape[2]].to(q.dtype)
+        mask = mask[:, :, start:end, : k.shape[2]].to(q.dtype)
 
         if self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(
@@ -216,7 +243,7 @@ class nMHA(nn.Module):
                 v,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 attn_mask=mask,
-                scale=self.scale
+                scale=self.scale,
             )
 
         else:
@@ -226,12 +253,12 @@ class nMHA(nn.Module):
                 qk = qk + alibi[None, :, :, None]  # apply bias along key dimension
 
             qk = qk + mask
-            
+
             qk = F.softmax(qk, dim=-1)
             qk = self.attn_dropout(qk)
 
-            output = qk @ v    
-        
+            output = qk @ v
+
         output = output.transpose(1, 2).reshape(batch_size, seq_length, d_model)
 
         output = self.W_O(output)

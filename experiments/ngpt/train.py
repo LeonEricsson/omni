@@ -7,7 +7,6 @@ import json
 import os
 import time
 from typing import Any, Dict
-import wandb
 
 import lightning as L
 import torch
@@ -16,16 +15,17 @@ import torch.nn.functional as F
 from datasets import load_from_disk
 from jaxtyping import Float, Int
 from logger import TrainingLogger
-from torch.utils.data import DataLoader
+from n_transformer import nConfig, nTransformer
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader
 
-from n_transformer import nTransformer, nConfig
+import wandb
 from omni.utils.setup import (
     create_checkpoint_folder,
     parse_args,
     validate_model_initialization,
 )
-from omni.utils.system import auto_device
+from omni.utils.system import auto_device, num_params
 
 torch.set_float32_matmul_precision(precision="high")
 
@@ -37,16 +37,16 @@ model_config = nConfig(
     num_heads=8,
     num_kv_heads=8,
     mlp_bias=False,
-    mlp_dropout=0.1,
+    mlp_dropout=0.0,
     attention_bias=False,
-    attention_dropout=0.1,
+    attention_dropout=0.0,
     weight_tying=False,
 )
 
 training_config = {
     # "dataset_dir": "data/pretokenized_fineweb-edu-2BT",  # pretokenized - run preprocess.py first
     "dataset_dir": "data/pretokenized_roneneldan_TinyStories",
-    "batch_size": 1,
+    "batch_size": 24,
     "learning_rate": 5e-4,
     "min_lr": 0.0,
     "num_epochs": 2,
@@ -68,7 +68,7 @@ def setup_wandb(config: Dict[str, Any]) -> None:
     wandb.init(
         project="nGPT",
         config=config,
-        mode="disabled",
+        mode="online",
     )
 
 
@@ -193,6 +193,7 @@ def train(
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
+                    model.normalize_weights()
 
                 total_steps += 1
                 batch_tokens = attention_mask.sum().item()
@@ -303,6 +304,8 @@ def main():
     if device.type == "cuda":
         model = torch.compile(model, fullgraph=True)
 
+    num_params(model)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=training_config["learning_rate"],
@@ -310,7 +313,9 @@ def main():
         weight_decay=0.0,
     )
 
-    scheduler = CosineAnnealingLR(optimizer, T_max=training_config["tot_steps"], eta_min=training_config["min_lr"])
+    scheduler = CosineAnnealingLR(
+        optimizer, T_max=training_config["tot_steps"], eta_min=training_config["min_lr"]
+    )
 
     model, optimizer = fabric.setup(model, optimizer)
     train_dataloader, val_dataloader = fabric.setup_dataloaders(

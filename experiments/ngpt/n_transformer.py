@@ -25,10 +25,10 @@ class nConfig:
 
     pos_encoding_type = "rope"
 
-    mlp_bias: Bool = True
-    mlp_dropout: Optional[Float] = None
-    attention_bias: Bool = True
-    attention_dropout: Optional[Float] = None
+    mlp_bias: Bool = False
+    mlp_dropout: Float = 0.0
+    attention_bias: Bool = False
+    attention_dropout: Float = 0.0
     weight_tying: Bool = False
     rope_theta: Float = 10000.0
 
@@ -47,8 +47,13 @@ class nTransformer(nn.Module):
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        self.s_z = nn.Parameter(torch.ones(config.vocab_size))
-        self.register_buffer("s_z_scale", torch.tensor(config.d_model**-0.5))
+        s_z_init = 1.0
+        s_z_scale = config.d_model**-0.5
+        self.s_z = nn.Parameter(
+            s_z_scale * torch.ones(config.vocab_size, dtype=torch.float32)
+        )
+        self.register_buffer("s_z_init", torch.tensor(s_z_init))
+        self.register_buffer("s_z_scale", torch.tensor(s_z_scale))
 
         if config.weight_tying:
             self.vocab_proj.weight = self.token_emb.weight
@@ -94,7 +99,9 @@ class nTransformer(nn.Module):
 
         x = self.vocab_proj(x)
 
-        x = x * self.s_z * self.s_z_scale
+        s_z = self.s_z * (self.s_z_init / self.s_z_scale)
+        x = s_z * x
+
         return x
 
 
@@ -105,12 +112,21 @@ class nBlock(nn.Module):
         self.attn = nMHA(config)
         self.mlp = nMLPSwiGLU(config)
 
-        self.alpha_A = nn.Parameter(torch.full((config.d_model,), config.alpha_init))
-        self.alpha_M = nn.Parameter(torch.full((config.d_model,), config.alpha_init))
-
-        self.register_buffer("alpha_scale", torch.tensor(config.d_model**-0.5))
+        alpha_scale = config.d_model**-0.5
+        self.alpha_attn = nn.Parameter(
+            alpha_scale * torch.ones(config.d_model, dtype=torch.float32)
+        )
+        self.alpha_mlp = nn.Parameter(
+            alpha_scale * torch.ones(config.d_model, dtype=torch.float32)
+        )
+        self.register_buffer("alpha_init", torch.tensor(config.alpha_init))
+        self.register_buffer("alpha_scale", torch.tensor(alpha_scale))
 
         self.norm = lambda x: F.normalize(x, dim=-1)
+
+    def normalize_weights(self):
+        self.attn.normalize_weights()
+        self.mlp.normalize_weights()
 
     def forward(
         self,
@@ -119,12 +135,11 @@ class nBlock(nn.Module):
         pos_info,
         kv_cache,
     ):
-        alpha_A = self.alpha_A * self.alpha_scale
-        alpha_M = self.alpha_M * self.alpha_scale
-
+        alpha_A = torch.abs(self.alpha_attn * (self.alpha_init / self.alpha_scale))
         x_A = self.norm(self.attn(x, mask, pos_info, kv_cache))
         x = self.norm(x + alpha_A * (x_A - x))  # eq. 10
 
+        alpha_M = torch.abs(self.alpha_mlp * (self.alpha_init / self.alpha_scale))
         x_M = self.norm(self.mlp(x))
         x = self.norm(x + alpha_M * (x_M - x))  # eq. 11
 
