@@ -19,7 +19,7 @@ class GPTConfig:
     num_layers: Int
 
     # components
-    pos_encoding_type: PositionEmbeddingScheme = "learned"
+    pos_encoding_type: PositionEmbeddingScheme = "absolute"
     activation_fn: ActivationFunction = "gelu"
     mlp: MLPType = "mlp"
     normalization: NormalizationType = "layernorm"

@@ -29,9 +29,9 @@ class TransformerConfig:
 
     head_dim: Int = None
     mlp_bias: Bool = True
-    mlp_dropout: Optional[Float] = None
+    mlp_dropout: Float = 0.0
     attention_bias: Bool = True
-    attention_dropout: Optional[Float] = None
+    attention_dropout: Float = 0.0
     weight_tying: Bool = False
     rope_theta: Float = 10000.0
     norm_eps: Float = 1e-5

@@ -1,5 +1,6 @@
+import inspect
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -10,7 +11,7 @@ from n_mlp import nMLPSwiGLU
 from torch import Tensor
 
 from omni.modules.cache import KVCache
-from omni.modules.pos_embeddings import PositionalEmbedding
+from omni.modules.pos_embeddings import PositionalEmbedding, PositionEmbeddingScheme
 
 
 @dataclass
@@ -23,7 +24,7 @@ class nConfig:
     num_layers: Int
     hidden_dim: Int = None
 
-    pos_encoding_type = "rope"
+    pos_encoding_type: PositionEmbeddingScheme = "rope"
 
     mlp_bias: Bool = False
     mlp_dropout: Float = 0.0
@@ -63,7 +64,7 @@ class nTransformer(nn.Module):
 
         self.register_buffer("causal_mask", causal_attention_mask(config.seq_len))
 
-    def get_kv_cache_layer(self, kv_cache, layer_idx):
+    def get_kv_cache_layer(self, kv_cache, layer_idx) -> KVCache:
         if not kv_cache:
             return None
 
@@ -104,6 +105,40 @@ class nTransformer(nn.Module):
 
         return x
 
+    def configure_optimizers(
+        self, weight_decay, learning_rate, betas, device_type
+    ) -> torch.optim.Optimizer:
+        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
+
+        decay_params = [
+            p for _, p in param_dict.items() if p.dim() >= 2
+        ]  # weights in matmuls & embeddings
+        nodecay_params = [
+            p for _, p in param_dict.items() if p.dim() < 2
+        ]  # biases, layer norms, and scalar params
+
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+
+        print(
+            f"Num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
+        )
+        print(
+            f"Num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
+        )
+
+        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == "cuda"
+
+        return torch.optim.AdamW(
+            optim_groups, lr=learning_rate, betas=betas, fused=use_fused
+        )
+
 
 class nBlock(nn.Module):
     def __init__(self, config: nConfig):
@@ -135,12 +170,25 @@ class nBlock(nn.Module):
         pos_info,
         kv_cache,
     ):
+
+        # alpha_A = torch.abs(self.alpha_attn * (self.alpha_init / self.alpha_scale))
+        # x_A = self.norm(self.attn(x, mask, pos_info, kv_cache))
+        # x = self.norm(x + alpha_A * (x_A - x))  # eq. 10
+
+        # alpha_M = torch.abs(self.alpha_mlp * (self.alpha_init / self.alpha_scale))
+        # x_M = self.norm(self.mlp(x))
+        # x = self.norm(x + alpha_M * (x_M - x))  # eq. 11
+
         alpha_A = torch.abs(self.alpha_attn * (self.alpha_init / self.alpha_scale))
-        x_A = self.norm(self.attn(x, mask, pos_info, kv_cache))
-        x = self.norm(x + alpha_A * (x_A - x))  # eq. 10
+        x_A = self.attn(x, mask, pos_info, kv_cache)
+        x_A_norm = self.norm(x_A)
+        x_norm = self.norm(x)
+        x = self.norm(x_norm + alpha_A * (x_A_norm - x_norm))  # eq. 10
 
         alpha_M = torch.abs(self.alpha_mlp * (self.alpha_init / self.alpha_scale))
-        x_M = self.norm(self.mlp(x))
-        x = self.norm(x + alpha_M * (x_M - x))  # eq. 11
+        x_M = self.mlp(x)
+        x_M_norm = self.norm(x_M)
+        x_norm = self.norm(x)
+        x = self.norm(x_norm + alpha_M * (x_M_norm - x_norm))  # eq. 11
 
         return x

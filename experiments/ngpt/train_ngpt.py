@@ -1,8 +1,3 @@
-"""
-A training example for a 20M parameter Llama style transformer on the TinyStories dataset
-- using PyTorch Lightning Fabric.
-"""
-
 import json
 import os
 import time
@@ -36,6 +31,8 @@ model_config = nConfig(
     num_layers=8,
     num_heads=8,
     num_kv_heads=8,
+    hidden_dim=3072,
+    pos_encoding_type="absolute",
     mlp_bias=False,
     mlp_dropout=0.0,
     attention_bias=False,
@@ -306,11 +303,12 @@ def main():
 
     num_params(model)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_config["learning_rate"],
+    # special case for normalized Transformer. Only certain weights are weight decayed.
+    optimizer = model.configure_optimizers(
+        weight_decay=0.1,
+        learning_rate=training_config["learning_rate"],
         betas=(0.9, 0.95),
-        weight_decay=0.0,
+        device_type=device.type,
     )
 
     scheduler = CosineAnnealingLR(
