@@ -5,6 +5,7 @@ my collection of paper implementations and experiments. built to be modular, eas
 ### papers
 
 - [Multi-head Latent Attention](/experiments/mla/mla.py)
+- [nGPT: Normalized Transformer](/experiments/ngpt/)
 - [Differential Transformer](/experiments/differential_transformer/diff_attention.py)
 - [Rotary Embeddings](/omni/modules/pos_embeddings.py#L59)
 - [Attention with Linear Biases](/omni/modules/pos_embeddings.py#L176)
