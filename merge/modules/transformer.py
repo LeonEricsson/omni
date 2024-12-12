@@ -1,35 +1,45 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from jaxtyping import Bool
 from jaxtyping import Float
 from jaxtyping import Int
-from jaxtyping import Complex
 from torch import Tensor
 
-from merge.modules.config import TransformerConfig
-from merge.modules.mlp import MLP_MAP
-from merge.modules.attention import ATTN_MAP
-from merge.modules.norm import NORM_MAP
+from merge.modules.attention import causal_attention_mask
 from merge.modules.block import Block
-from merge.modules.pos_embeddings import precompute_freqs_cis
+from merge.modules.config import TransformerConfig
+from merge.modules.norm import NORM_MAP
+from merge.modules.pos_embeddings import PositionEncoding
+
 
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-
         self.token_emb = nn.Embedding(config.vocab_size, config.d_model)
 
-        attention = ATTN_MAP[config.attention] # needs input on init?
-        mlp = MLP_MAP[config.mlp] # needs input on init
-        norm1 = NORM_MAP[config.normalization] # need input param on init
-        norm2 = NORM_MAP[config.normalization]
-        
-        self.blocks = nn.ModuleList([Block(attention, mlp, norm1, norm2) for _ in config.num_layers])
+        self.pos_encoding = PositionEncoding(config)
 
-        self.norm_out = NORM_MAP[config.normalization]
+        self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
+
+        self.norm_out = NORM_MAP[config.normalization](config)
 
         self.vocab_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        self.freq_cis = precompute_freqs_cis(config.d_model // config.num_heads, config.seq_len, config.rope_theta)
+        self.causal_mask = self.register_buffer(
+            "causal_mask", causal_attention_mask(config.seq_len)
+        )
+
+    def forward(
+        self, x: Int[Tensor, "batch seq"]
+    ) -> Float[Tensor, "batch seq vocab_size"]:
+        x = self.token_emb(x)
+
+        x, pos_info = self.pos_encoding(x)
+
+        for block in self.blocks:
+            x = block(x, self.causal_mask, pos_info)
+
+        x = self.norm_out(x)
+
+        x = self.vocab_proj(x)
+
+        return x
