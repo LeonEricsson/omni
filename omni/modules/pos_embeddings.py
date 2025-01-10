@@ -1,13 +1,8 @@
-from typing import get_args
-from typing import Literal
-from typing import Tuple
-from typing import TypeAlias
+from typing import Literal, Tuple, TypeAlias, get_args
 
 import torch
 import torch.nn as nn
-from jaxtyping import Complex
-from jaxtyping import Float
-from jaxtyping import Int
+from jaxtyping import Complex, Float, Int
 from torch import Tensor
 
 MHATensor: TypeAlias = Float[Tensor, "batch heads seq head_dim"]
@@ -173,7 +168,16 @@ def apply_rope(
     return real_q.type_as(q), real_k.type_as(k)
 
 
-PositionEmbeddingScheme = Literal["rope", "absolute", "learned"]
+def precompute_alibi_bias(
+    seq_length: Int, num_heads: Int
+) -> Float[Tensor, "num_heads seq"]:
+    ratio = 2 ** (-8 / num_heads)
+    slopes = torch.pow(ratio, torch.arange(1, num_heads + 1, dtype=torch.float32))
+    positions = -torch.arange(seq_length, dtype=torch.float32)
+    return slopes[:, None] * positions[None, :]
+
+
+PositionEmbeddingScheme = Literal["rope", "absolute", "learned", "alibi"]
 
 
 class PositionalEmbedding(nn.Module):
@@ -205,6 +209,11 @@ class PositionalEmbedding(nn.Module):
         elif self.type == "learned":
             self.pos_embedding = nn.Embedding(config.seq_len, config.d_model)
 
+        elif self.type == "alibi":
+            self.register_buffer(
+                "alibi_bias", precompute_alibi_bias(config.seq_len, config.num_heads)
+            )
+
     def forward(self, x: Float[Tensor, "batch seq d_model"]):
         pos_info = None
 
@@ -215,5 +224,7 @@ class PositionalEmbedding(nn.Module):
         elif self.type == "learned":
             seq_indices = torch.arange(x.size(1), device=x.device).unsqueeze(0)
             x = x + self.pos_embedding(seq_indices)
+        elif self.type == "alibi":
+            pos_info = self.alibi_bias
 
         return x, pos_info

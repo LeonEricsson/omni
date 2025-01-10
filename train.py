@@ -38,23 +38,24 @@ model_config = LlamaConfig(
     mlp_dropout=0.0,
     attention_bias=False,
     attention_dropout=0.0,
-    pos_encoding_type="rope",
+    pos_encoding_type="alibi",
     mlp="mlp_swiglu",
     normalization="rmsnorm",
     attention="gqa",
 )
 
 training_config = {
-    "batch_size": 48,
+    "batch_size": 1,
     "learning_rate": 5e-4,
     "min_lr": 1e-7,
     "num_epochs": 10,
+    "num_workers": 4,
     "eval_every": 500,
     "warmup_steps": 1000,
     "tot_steps": 50000,
     "gradient_clip_norm": 1.0,
     "seed": 42,
-    "device": None,
+    "device": "cpu",
 }
 
 dataset_dir = Path(

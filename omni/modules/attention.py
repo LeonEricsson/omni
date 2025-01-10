@@ -1,12 +1,9 @@
-from typing import Literal
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Complex
-from jaxtyping import Float
-from jaxtyping import Int
+from jaxtyping import Complex, Float, Int
 from torch import Tensor
 
 from omni.modules.pos_embeddings import apply_rope_real
@@ -183,7 +180,7 @@ class MHA(nn.Module):
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
 
-        if self.flash_attn:
+        if self.flash_attn and not self.pos_encoding_type == "alibi":
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
                 k,
@@ -194,6 +191,9 @@ class MHA(nn.Module):
             )
         else:
             qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, n_heads, seq, seq)
+            if self.pos_encoding_type == "alibi":
+                alibi: Float[Tensor, "n_heads seq"] = pos_info
+                qk = qk + alibi[None, :, :, None]  # apply bias along key dimension
             qk = qk + mask
 
             qk = F.softmax(qk, dim=-1)

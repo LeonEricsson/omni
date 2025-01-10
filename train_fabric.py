@@ -57,9 +57,12 @@ training_config = {
     "warmup_steps": 1000,
     "tot_steps": 50000,
     "gradient_clip_norm": 1.0,
+    "gradient_acc_steps": 1,
     "seed": 42,
     "num_workers": 4,
     "device": None,  # auto-detect
+    "num_devices": 1,
+    "strategy": "auto",
     "precision": "16-mixed",
 }
 
@@ -279,7 +282,10 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
 
 def main():
     fabric = L.Fabric(
-        accelerator=device.type, devices=1, precision=training_config["precision"]
+        accelerator=device.type,
+        devices=training_config["num_devices"],
+        precision=training_config["precision"],
+        strategy=training_config["strategy"],
     )
     fabric.launch()
     fabric.seed_everything(training_config["seed"])
@@ -345,6 +351,7 @@ def main():
         optimizer=optimizer,
         scheduler=scheduler,
         gradient_clip_norm=training_config["gradient_clip_norm"],
+        gradient_acc_steps=training_config["gradient_acc_steps"],
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
