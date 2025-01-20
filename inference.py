@@ -81,7 +81,6 @@ class Inference:
 
 
 if __name__ == "__main__":
-    import lightning as L
     import torch
 
     from omni.architectures.llama import LlamaConfig
@@ -112,6 +111,8 @@ if __name__ == "__main__":
     )
 
     model = Transformer(llama_config)
+
+    ## create KV cache
 
     checkpoint = torch.load("checkpoints/llama-30M_20250120_144801/state.ckpt")
     model.load_state_dict(checkpoint["model"])
