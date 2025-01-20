@@ -254,6 +254,10 @@ def extract_metadata(dataset_dir: str) -> Dict[str, Any]:
     with open(metadata_path, "r") as f:
         return json.load(f)
 
+def save_checkpoint(checkpoint_dir: str, filename: str, model: nn.Module, fabric: L.Fabric):
+    checkpoint_path = os.path.join(checkpoint_dir, filename)
+    state = {"model": model}
+    fabric.save(checkpoint_path, state)
 
 def main():
     cli_args = parse_args(training_config)
@@ -324,6 +328,8 @@ def main():
 
     validate_model_initialization(dataset, model, device, ignore_index=pad_token_id)
 
+    save_checkpoint(checkpoint_dir, "init.ckpt", model, fabric)
+    exit()
     model = train(
         fabric=fabric,
         train_dataloader=train_dataloader,
@@ -336,12 +342,9 @@ def main():
         num_epochs=training_config["num_epochs"],
         eval_every=training_config["eval_every"],
         ignore_index=pad_token_id,
-    )
+    )    
 
-    # save model
-    checkpoint_path = os.path.join(checkpoint_dir, "state.ckpt")
-    state = {"model": model}
-    fabric.save(checkpoint_path, state)
+    save_checkpoint(checkpoint_dir, "final.ckpt", model, fabric)
 
     wandb.finish()
 

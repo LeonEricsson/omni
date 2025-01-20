@@ -75,6 +75,8 @@ class GQA(nn.Module):
         x: Float[Tensor, "batch seq d_model"],
         mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
+        kv_cache: Optional[KVCache],
+        layer_idx: Optional[int],
     ):
         batch_size, seq_length, d_model = x.size()
 
@@ -94,14 +96,9 @@ class GQA(nn.Module):
         k = torch.repeat_interleave(k, self.kv_groups, dim=1)
         v = torch.repeat_interleave(v, self.kv_groups, dim=1)
 
-        # if kv_cache is not None:
-        #     cached_k, cached_v = self.kv_cache
-        #     k = torch.cat([cached_k, k], dim=2)
-        #     v = torch.cat([cached_v, v], dim=2)
-        #     k = k[:, :, -seq_length:]
-        #     v = v[:, :, -seq_length:]
-        #     self.kv_cache = (k, v)
-
+        if kv_cache is not None:
+            k, v = kv_cache.forward(layer_idx, k, v)
+            
         if self.pos_encoding_type == "rope":
             freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
             q, k = apply_rope_real(q, k, freq_cis)
