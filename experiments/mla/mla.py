@@ -260,16 +260,27 @@ class MLAInference(MLA):
     def fuse_weights(self):
         """Lazily compute and store fused weights for inference."""
 
-        # Fuse Q with K and V up-projections
-        W_UK = self.W_UK.weight.detach()
-        W_UQ = self.W_UQ.weight.detach()
+        # ---------- 1. fuse   UQ   ∘   UK   -------------------------------------
+        H, Dh = self.num_heads, self.head_dim
+        d_cq = self.W_UQ.in_features
+        d_ckv = self.W_UK.in_features
 
-        W_UQ_UK = W_UQ.T @ W_UK  # (d_cq, d_ckv)
+        W_UQ = self.W_UQ.weight.detach().view(H, Dh, d_cq)  # (H, Dh, d_cq)
+        W_UK = self.W_UK.weight.detach().view(H, Dh, d_ckv)  # (H, Dh, d_ckv)
 
-        W_UV = self.W_UV.weight.detach()
-        W_O = self.W_O.weight.detach()
+        # (H, d_cq, Dh)  @  (H, Dh, d_ckv)  →  (H, d_cq, d_ckv)
+        fused_per_head = torch.matmul(W_UQ.transpose(1, 2), W_UK)
 
-        W_U_OV = W_UV.T @ W_O.T  # (d_ckv, d_model)
+        # concat heads side‑by‑side: (d_cq, H * d_ckv)
+        W_UQ_UK = fused_per_head.permute(1, 0, 2).reshape(d_cq, H * d_ckv).contiguous()
+
+        # ---------- 2. fuse   U_V   ∘   O   -------------------------------------
+        d_ckv = self.W_UV.in_features
+        d_model = self.W_O.out_features
+        W_UV = self.W_UV.weight.detach().view(H, Dh, d_ckv)
+        W_O = self.W_O.weight.detach().T.contiguous().view(H, Dh, d_model)
+
+        W_U_OV = torch.matmul(W_V.permute(0, 2, 1), W_Oh)  # (H, d_ckv, d_model)
 
         self.register_buffer("W_UQ_UK", W_UQ_UK)
         self.register_buffer("W_U_OV", W_U_OV)
@@ -288,13 +299,15 @@ class MLAInference(MLA):
         if not hasattr(self, "W_UQ_UK") or not hasattr(self, "W_U_OV"):
             self.fuse_weights()
 
-        c_Q = self.q_norm(self.W_DQ(x))
+        c_Q = self.q_norm(self.W_DQ(x))  # (batch, seq, d_cq)
 
         # Compressed "content" dimensions
         c_KV = self.W_DWK(x)
         c_KV = self.kv_norm(c_KV)  # (batch, seq, d_ckv)
 
-        q_C = (c_Q @ self.W_UQ_UK).unsqueeze(1)  # (batch, 1, seq, d_ckv)
+        q_C = c_Q @ self.W_UQ_UK  # (batch, seq, d_ckv * num_heads)
+        q_C = q_C.reshape(batch_size, seq_length, self.num_heads, -1)
+        q_C = q_C.transpose(1, 2)
 
         # Decoupled RoPE dimensions
         q_R = self.W_QR(c_Q)  # (batch, seq, num_heads * head_dim_decoupled_qk)
@@ -307,25 +320,22 @@ class MLAInference(MLA):
         if kv_cache is not None:
             c_KV, k_R = kv_cache.forward(layer_idx, c_KV, k_R)
 
-        c_KV = c_KV.unsqueeze(1)
-        k_R = k_R.unsqueeze(1)
-
-        v = c_KV.expand(-1, self.num_heads, -1, -1)
+        k_R = k_R.unsqueeze(1)  # (batch, 1, seq, head_dim_decoupled_qk)
 
         freq_cis: Complex[Tensor, "seq half_head_dim"] = pos_info
         q_R, k_R = apply_rope_real(q_R, k_R, freq_cis)
 
-        # bring it together for the attention
+        # bring it together for attention. Note that 1) K, V are shared, both are the compressed latent c_KV, and
+        # 2) K, V are single head, meaning that MLA acts as MQA, with larger head dim (d_ckv > head_dim), during inference.
+        k_C = c_KV.unsqueeze(1)  # (batch, 1, seq, d_ckv)
+        k = torch.cat(
+            [c_KV, k_R], dim=-1
+        )  # (batch, 1, seq, d_ckv + head_dim_decoupled_qk)
+        q = torch.cat(
+            [q_C, q_R], dim=-1
+        )  # (batch, num_heads, seq, d_ckv + head_dim_decoupled_qk)
+        v = c_KV.unsqueeze(1)  # (batch, 1, seq, d_ckv)
 
-        k = torch.cat([c_KV, k_R], dim=-1)
-        q = torch.cat([q_C.expand(-1, self.num_heads, -1, -1), q_R], dim=-1)
-
-        ## There is something wrong here with the shapes, not sure how to handle the heads.
-        ## Given the fused weight matrices we have "lost" the head_dim and now we've instead got
-        # the compressed dimensions? q_R has num heads but q_C does not because of the fused
-        # matrix W_UQ_UK?
-
-        print(k.shape, q.shape, v.shape)
         if self.flash_attn:
             output = torch.nn.functional.scaled_dot_product_attention(
                 q,
@@ -337,17 +347,16 @@ class MLAInference(MLA):
                 scale=self.scale,
             )
         else:
-            qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, 1, seq, seq)
+            qk = (q @ k.transpose(2, 3)) / self.scale  # (batch, num_heads, seq, seq)
             qk = qk + mask[:, :, qk.shape[-1], : qk.shape[-1]]
-            qk = F.softmax(qk, dim=-1)
+            qk = F.softmax(qk, dim=-1)  # (batch, num_heads, seq, seq)
             qk = self.attn_dropout(qk)
 
-            output = qk @ v  # (batch, 1, seq, d_ckv)
+            o = qk @ v  # (batch, num_heads, seq, d_ckv)
 
-        output = output.squeeze(1)
-
-        output = output @ self.W_U_OV
+        output = torch.einsum(
+            "bhsd, hdm -> bsm", o, self.W_U_OV
+        )  # sum over h and d_ckv
         output = self.res_dropout(output)
 
-        print("output", output.shape)
         return output
