@@ -227,6 +227,18 @@ class MHA(nn.Module):
         return output
 
 class GatedMHA(nn.Module):
+    """
+    A Multi-Head Attention module with configurable gating mechanisms.
+
+    This module implements a standard Multi-Head Attention (MHA) block but
+    augments it with several gating variants. The gating mechanisms can be 
+    applied at different positions within the attention calculation, and their 
+    behavior can be configured.
+
+    References:
+         - "Gated Attention for Large Language Models: Non-linearity, 
+         Sparsity,and Attention-Sink-Free" (https://arxiv.org/abs/2505.06708)
+    """
     def __init__(self, config):
         """
         Initializes the GatedMHA module.
@@ -305,8 +317,8 @@ class GatedMHA(nn.Module):
 
     def forward(
         self,
-        x: FloatTensor,
-        mask: FloatTensor,
+        x: Float[Tensor, "batch seq d_model"],
+        mask: Float[Tensor, "1 1 seq seq"],
         pos_info: Optional[Tensor],
         kv_cache,
     ):
