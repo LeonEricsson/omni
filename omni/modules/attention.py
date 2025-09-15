@@ -248,7 +248,9 @@ class GatedMHA(nn.Module):
             - d_model: Model dimension
             - bias: Whether to use bias in linear layers
             - dropout: Dropout probability for attention and residual connections
-            - qkv_gate_enabled (bool): If True, enables gating for Q, K, and V.
+            - q_gate_enabled (bool): If True, enables gating for Q.
+            - k_gate_enabled (bool): If True, enables gating for K.
+            - v_gate_enabled (bool): If True, enables gating for V.
             - attention_output_gate_enabled (bool): If True, enables gating
                 for the SDPA output (position G1).
             - final_output_gate_enabled (bool): If True, enables gating for
@@ -269,9 +271,13 @@ class GatedMHA(nn.Module):
 
         self.config = config
 
-        if config.qkv_gate_enabled:
+        if config.q_gate_enabled:
             self.W_q_gate = self._create_gate_layer(config)
+            
+        if config.k_gate_enabled:
             self.W_k_gate = self._create_gate_layer(config)
+            
+        if config.v_gate_enabled:
             self.W_v_gate = self._create_gate_layer(config)
 
         if config.attention_output_gate_enabled:
@@ -334,9 +340,11 @@ class GatedMHA(nn.Module):
         # Apply gating mechanisms using direct config access.
         if self.config.qkv_gate_enabled:
             q = self._apply_gate(q, x, self.W_q_gate)
+        if self.config.k_gate_enabled:
             k = self._apply_gate(k, x, self.W_k_gate)
+        if self.config.v_gate_enabled:
             v = self._apply_gate(v, x, self.W_v_gate)
-        
+
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
