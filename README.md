@@ -4,6 +4,7 @@ my collection of paper implementations and experiments. built to be modular, eas
 
 ### papers
 
+- [Gated Attention](/omni/modules/attention.py#L229)
 - [Dynamic Tanh](/experiments/dyt/)
 - [Multi-head Latent Attention](/experiments/mla/mla.py)
 - [nGPT: Normalized Transformer](/experiments/ngpt/)
